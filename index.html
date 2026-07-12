@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0d0d1a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="myshelf" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="apple-touch-icon" href="/icon-180.png" />
+  <title>myshelf</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body, #root { height: 100%; background: #0d0d1a; }
+    body { overscroll-behavior: none; }
+    ::-webkit-scrollbar { display: none; }
+    select option { background: #16162a; color: #e2e0f0; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useRef, useEffect } = React;
+    const STORAGE_KEY = "bookshelf_v1";
+
+    const emptyBook = {
+      id: null, title: "", author: "", pages: "", genre: "",
+      year: "", publisher: "", isbn: "", description: "",
+      status: "Unread", rating: 0, cover: null, addedAt: null,
+    };
+
+    const resizeImage = (dataUrl, maxSize = 500) => new Promise((resolve) => {
+      try {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          let w = img.width, h = img.height;
+          if (!w || !h) { resolve(dataUrl); return; }
+          if (w > maxSize || h > maxSize) {
+            if (w > h) { h = Math.round(h * maxSize / w); w = maxSize; }
+            else { w = Math.round(w * maxSize / h); h = maxSize; }
+          }
+          canvas.width = w; canvas.height = h;
+          canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+          try { resolve(canvas.toDataURL("image/jpeg", 0.8)); }
+          catch { resolve(dataUrl); }
+        };
+        img.onerror = () => resolve(dataUrl);
+        img.src = dataUrl;
+      } catch { resolve(dataUrl); }
+    });
+
+    async function lookupByISBN(isbn) {
+      const clean = isbn.replace(/[^0-9Xx]/g, "");
+      const res = await fetch(`/api/isbn?isbn=${clean}`);
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.error || "No book found for that barcode");
+      }
+      return await res.json();
+    }
+
+    function StarRating({ value, onChange }) {
+      const [hovered, setHovered] = useState(0);
+      return (
+        <div style={{ display: "flex", gap: 4 }}>
+          {[1,2,3,4,5].map(star => (
+            <span key={star}
+              onClick={() => onChange && onChange(star === value ? 0 : star)}
+              onMouseEnter={() => onChange && setHovered(star)}
+              onMouseLeave={() => onChange && setHovered(0)}
+              style={{ fontSize: 22, cursor: onChange ? "pointer" : "default",
+                color: star <= (hovered || value) ? "#c084fc" : "#3f3f5a",
+                transition: "color 0.15s", userSelect: "none" }}>★</span>
+          ))}
+        </div>
+      );
+    }
+
+    function StatusBadge({ status }) {
+      const colors = {
+        "Unread":   { bg: "#1e1b3a", text: "#a78bfa", border: "#4c1d95" },
+        "Reading":  { bg: "#1a2a1a", text: "#4ade80", border: "#166534" },
+        "Finished": { bg: "#1a1a2e", text: "#60a5fa", border: "#1e3a5f" },
+      };
+      const c = colors[status] || colors["Unread"];
+      return <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.06em",
+        textTransform: "uppercase", padding: "3px 10px", borderRadius: 99,
+        background: c.bg, color: c.text, border: `1px solid ${c.border}` }}>{status}</span>;
+    }
+
+    function App() {
+      const [books, setBooks]           = useState([]);
+      const [view, setView]             = useState("library");
+      const [selected, setSelected]     = useState(null);
+      const [scanning, setScanning]     = useState(false);
+      const [scanMsg, setScanMsg]       = useState("Looking up book…");
+      const [scanError, setScanError]   = useState("");
+      const [form, setForm]             = useState({ ...emptyBook });
+      const [previewImg, setPreviewImg] = useState(null);
+      const [filter, setFilter]         = useState("All");
+      const [searchQ, setSearchQ]       = useState("");
+      const [scanningBarcode, setScanningBarcode] = useState(false);
+      const coverRef  = useRef();
+      const barcodeScannerRef = useRef(null);
+
+      useEffect(() => {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) { try { setBooks(JSON.parse(saved)); } catch {} }
+      }, []);
+
+      const saveBooks = (updated) => {
+        setBooks(updated);
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(updated)); }
+        catch { alert("Couldn't save — device storage is full. Try removing a book."); }
+      };
+
+      // ── Cover photo (view only, no scan) ─────────────────────────────────────
+      const handleCoverPhoto = async (file) => {
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+          const thumb = await resizeImage(e.target.result, 400);
+          setForm(f => ({ ...f, cover: thumb }));
+          setPreviewImg(thumb);
+        };
+        reader.readAsDataURL(file);
+      };
+
+      // ── Barcode scan → ISBN lookup ───────────────────────────────────────────
+      const handleISBNFound = async (isbn) => {
+        setScanError("");
+        setScanMsg("Looking up book…");
+        setScanning(true);
+        try {
+          const details = await lookupByISBN(isbn);
+          let cover = details.cover || null;
+          if (cover) { const r = await resizeImage(cover, 400); cover = r || cover; }
+          delete details.cover;
+          setForm(f => ({ ...f, ...details, cover: cover || f.cover, id: f.id }));
+          if (cover) setPreviewImg(cover);
+        } catch (err) {
+          setScanError("Barcode lookup failed: " + (err.message || "Unknown error"));
+        } finally {
+          setScanning(false);
+        }
+      };
+
+      const startBarcodeScan = () => {
+        setScanError("");
+        setScanningBarcode(true);
+        setTimeout(async () => {
+          // Prefer ZXing (more reliable for book barcodes on iPad Safari).
+          if (window.ZXing && window.ZXing.BrowserMultiFormatReader) {
+            try {
+              const hints = new Map();
+              const reader = new ZXing.BrowserMultiFormatReader(hints, 300);
+              barcodeScannerRef.current = { type: "zxing", reader };
+              await reader.decodeFromConstraints(
+                { video: { facingMode: "environment" } },
+                "zxing-video",
+                (result, err) => {
+                  if (result) {
+                    const text = result.getText ? result.getText() : result.text;
+                    if (text) { stopBarcodeScan(); handleISBNFound(text); }
+                  }
+                }
+              );
+              return;
+            } catch (e) {
+              // fall through to html5-qrcode
+            }
+          }
+          // Fallback: html5-qrcode
+          try {
+            const scanner = new Html5Qrcode("barcode-reader", {
+              experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+            });
+            barcodeScannerRef.current = { type: "h5", scanner };
+            await scanner.start(
+              { facingMode: "environment" },
+              { fps: 20, qrbox: { width: 320, height: 200 }, aspectRatio: 1.7 },
+              async (decoded) => { await stopBarcodeScan(); handleISBNFound(decoded); },
+              () => {}
+            );
+          } catch {
+            setScanningBarcode(false);
+            setScanError("Camera access failed. Allow camera in Settings.");
+          }
+        }, 150);
+      };
+
+      const stopBarcodeScan = async () => {
+        const ref = barcodeScannerRef.current;
+        if (ref) {
+          try {
+            if (ref.type === "zxing") { ref.reader.reset(); }
+            else if (ref.type === "h5") { await ref.scanner.stop(); ref.scanner.clear(); }
+          } catch {}
+          barcodeScannerRef.current = null;
+        }
+        setScanningBarcode(false);
+      };
+
+      const startAdd = () => { setForm({ ...emptyBook, id: Date.now(), addedAt: new Date().toISOString() }); setPreviewImg(null); setScanError(""); setView("add"); };
+      const saveBook = () => {
+        if (!form.title.trim()) return;
+        const idx = books.findIndex(b => b.id === form.id);
+        const updated = idx >= 0 ? books.map(b => b.id === form.id ? form : b)
+          : [{ ...form, addedAt: form.addedAt || new Date().toISOString() }, ...books];
+        saveBooks(updated); setView("library");
+      };
+      const deleteBook = (id) => { saveBooks(books.filter(b => b.id !== id)); setView("library"); };
+      const openDetail = (book) => { setSelected(book); setView("detail"); };
+      const editBook   = (book) => { setForm({ ...book }); setPreviewImg(book.cover || null); setScanError(""); setView("add"); };
+      const setStatus  = (book, status) => { saveBooks(books.map(b => b.id === book.id ? { ...b, status } : b)); setSelected({ ...book, status }); };
+
+      const statuses = ["All", "Unread", "Reading", "Finished"];
+      const filtered = books.filter(b => {
+        const matchStatus = filter === "All" || b.status === filter;
+        const q = searchQ.toLowerCase();
+        return matchStatus && (!q || b.title.toLowerCase().includes(q) || b.author.toLowerCase().includes(q));
+      });
+      const counts = { All: books.length,
+        "Unread": books.filter(b => b.status==="Unread").length,
+        "Reading": books.filter(b => b.status==="Reading").length,
+        "Finished": books.filter(b => b.status==="Finished").length };
+
+      const inp = { width:"100%", background:"#16162a", border:"1px solid #2a2a45",
+        borderRadius:10, padding:"10px 14px", color:"#e2e0f0", fontSize:14, outline:"none", boxSizing:"border-box" };
+      const lbl = { fontSize:12, fontWeight:600, color:"#7070a0", textTransform:"uppercase",
+        letterSpacing:"0.06em", marginBottom:6, display:"block", marginTop:16 };
+      const btnSec = { background:"#1e1e3a", border:"1px solid #2a2a50", borderRadius:12,
+        padding:11, color:"#c084fc", fontWeight:600, fontSize:13, cursor:"pointer" };
+
+      // ── Detail ──────────────────────────────────────────────────────────────
+      if (view === "detail" && selected) {
+        const book = books.find(b => b.id === selected.id) || selected;
+        return (
+          <div style={{ position:"fixed", inset:0, background:"#0d0d1a", overflowY:"auto", fontFamily:"'Inter',system-ui,sans-serif", color:"#e2e0f0" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:12, padding:"52px 20px 16px", borderBottom:"1px solid #1e1e3a" }}>
+              <button onClick={() => setView("library")} style={{ background:"none", border:"none", color:"#c084fc", fontSize:22, cursor:"pointer" }}>←</button>
+              <span style={{ fontSize:18, fontWeight:700 }}>Book Details</span>
+            </div>
+            {book.cover
+              ? <img src={book.cover} alt={book.title} style={{ width:"100%", maxHeight:300, objectFit:"contain", background:"#13132a" }} />
+              : <div style={{ width:"100%", height:180, background:"#13132a", display:"flex", alignItems:"center", justifyContent:"center", fontSize:72 }}>📚</div>}
+            <div style={{ padding:"24px 20px 80px" }}>
+              <div style={{ fontSize:24, fontWeight:800, lineHeight:1.2, marginBottom:6 }}>{book.title||"Untitled"}</div>
+              <div style={{ fontSize:16, color:"#a090c0", marginBottom:16 }}>{book.author||"Unknown Author"}</div>
+
+              {/* Status switcher */}
+              <div style={{ display:"flex", gap:8, marginBottom:20 }}>
+                {["Unread","Reading","Finished"].map(s => (
+                  <button key={s} onClick={() => setStatus(book, s)}
+                    style={{ flex:1, padding:"8px 4px", borderRadius:10, fontSize:12, fontWeight:700, cursor:"pointer",
+                      background: book.status===s ? "#7c3aed" : "#16162a",
+                      color: book.status===s ? "#fff" : "#9090b0",
+                      border: `1px solid ${book.status===s ? "#7c3aed" : "#2a2a45"}` }}>{s}</button>
+                ))}
+              </div>
+
+              <div style={{ marginBottom:20 }}><StarRating value={book.rating} onChange={r => { saveBooks(books.map(b => b.id===book.id?{...b,rating:r}:b)); setSelected({...book,rating:r}); }} /></div>
+
+              {book.description && <p style={{ fontSize:14, color:"#9090b0", lineHeight:1.6, marginBottom:20 }}>{book.description}</p>}
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:20 }}>
+                {[["Pages",book.pages],["Year",book.year],["Genre",book.genre],["Publisher",book.publisher]].map(([label,val]) =>
+                  val ? <div key={label} style={{ background:"#13132a", border:"1px solid #1e1e3a", borderRadius:12, padding:"12px 14px" }}>
+                    <div style={{ fontSize:11, color:"#60608a", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:4 }}>{label}</div>
+                    <div style={{ fontSize:15, fontWeight:600 }}>{val}</div>
+                  </div> : null)}
+                {book.isbn && <div style={{ background:"#13132a", border:"1px solid #1e1e3a", borderRadius:12, padding:"12px 14px", gridColumn:"1/-1" }}>
+                  <div style={{ fontSize:11, color:"#60608a", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:4 }}>ISBN</div>
+                  <div style={{ fontSize:15, fontWeight:600 }}>{book.isbn}</div>
+                </div>}
+              </div>
+              <div style={{ display:"flex", gap:10 }}>
+                <button onClick={() => editBook(book)} style={{ flex:1, background:"#1e1e3a", border:"1px solid #2a2a50", borderRadius:12, padding:12, color:"#c084fc", fontWeight:700, fontSize:14, cursor:"pointer" }}>✏️ Edit</button>
+                <button onClick={() => deleteBook(book.id)} style={{ flex:1, background:"#2a1a1a", border:"1px solid #4a2020", borderRadius:12, padding:12, color:"#f87171", fontWeight:700, fontSize:14, cursor:"pointer" }}>🗑 Delete</button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      // ── Add / Edit ───────────────────────────────────────────────────────────
+      if (view === "add") return (
+        <div style={{ position:"fixed", inset:0, background:"#0d0d1a", overflowY:"auto", fontFamily:"'Inter',system-ui,sans-serif", color:"#e2e0f0", paddingBottom:80 }}>
+          {scanningBarcode && (
+            <div style={{ position:"fixed", inset:0, background:"#000", zIndex:100, display:"flex", flexDirection:"column" }}>
+              <div style={{ padding:"52px 20px 16px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                <span style={{ fontSize:16, fontWeight:700, color:"#fff" }}>Point camera at barcode</span>
+                <button onClick={stopBarcodeScan} style={{ background:"#2a2a45", border:"none", borderRadius:10, padding:"8px 16px", color:"#fff", fontWeight:600, fontSize:14, cursor:"pointer" }}>Cancel</button>
+              </div>
+              <div id="barcode-reader" style={{ width:"100%", flex:1, position:"relative", overflow:"hidden" }}>
+                <video id="zxing-video" style={{ width:"100%", height:"100%", objectFit:"cover" }} muted playsInline></video>
+              </div>
+              <div style={{ padding:20, textAlign:"center", color:"#9090b0", fontSize:13 }}>Line up the barcode — hold steady</div>
+            </div>
+          )}
+          <div style={{ display:"flex", alignItems:"center", gap:12, padding:"52px 20px 16px", borderBottom:"1px solid #1e1e3a" }}>
+            <button onClick={() => setView("library")} style={{ background:"none", border:"none", color:"#c084fc", fontSize:22, cursor:"pointer" }}>←</button>
+            <span style={{ fontSize:18, fontWeight:700 }}>{form.id && books.find(b => b.id === form.id) ? "Edit Book" : "Add Book"}</span>
+          </div>
+          <div style={{ padding:"20px 20px 0" }}>
+            <div style={{ width:"100%", height:200, borderRadius:16, overflow:"hidden", background:"#13132a",
+              border:"2px dashed #2a2a50", display:"flex", alignItems:"center", justifyContent:"center",
+              marginBottom:12, position:"relative" }}>
+              {previewImg
+                ? <img src={previewImg} alt="cover" style={{ width:"100%", height:"100%", objectFit:"contain" }} />
+                : <div style={{ textAlign:"center" }}>
+                    <div style={{ fontSize:40, marginBottom:8 }}>📚</div>
+                    <div style={{ fontSize:13, color:"#60608a" }}>Scan a barcode to auto-fill</div>
+                  </div>}
+              {scanning && (
+                <div style={{ position:"absolute", inset:0, background:"rgba(13,13,26,0.9)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:10 }}>
+                  <div style={{ fontSize:28 }}>🔍</div>
+                  <div style={{ color:"#c084fc", fontWeight:600, fontSize:14 }}>{scanMsg}</div>
+                </div>)}
+            </div>
+            {scanError && <div style={{ color:"#f87171", fontSize:13, marginBottom:8, textAlign:"center" }}>{scanError}</div>}
+
+            <button onClick={startBarcodeScan} style={{ ...btnSec, width:"100%", marginBottom:8, background:"linear-gradient(135deg,#7c3aed,#a855f7)", color:"#fff", border:"none", fontSize:15, padding:13 }}>
+              📊 Scan Barcode
+            </button>
+            <button onClick={async () => {
+              const entered = prompt("Enter the ISBN (the number under the barcode, e.g. 9781743312629):");
+              if (entered && entered.replace(/[^0-9Xx]/g, "").length >= 10) {
+                await handleISBNFound(entered);
+              } else if (entered) {
+                setScanError("That doesn't look like a valid ISBN.");
+              }
+            }} style={{ ...btnSec, width:"100%", marginBottom:8 }}>
+              🔢 Search by ISBN
+            </button>
+            <button onClick={() => coverRef.current.click()} style={{ ...btnSec, width:"100%", marginBottom:4 }}>
+              📷 Add / Change Cover Photo
+            </button>
+            <input ref={coverRef} type="file" accept="image/*" style={{ display:"none" }} onChange={e => handleCoverPhoto(e.target.files[0])} />
+          </div>
+          <div style={{ padding:"0 20px" }}>
+            {[["Title *","title","Book title"],["Author","author","Author name"],
+              ["Genre","genre","e.g. Fiction, Self-Help"],["Publisher","publisher","Publisher"],["ISBN","isbn","ISBN"]].map(([label,key,ph]) => (
+              <div key={key}>
+                <label style={lbl}>{label}</label>
+                <input style={inp} value={form[key]} placeholder={ph} onChange={e => setForm({...form,[key]:e.target.value})} />
+              </div>))}
+            <div style={{ display:"flex", gap:12 }}>
+              {[["Pages","pages","e.g. 320"],["Year","year","e.g. 2023"]].map(([label,key,ph]) => (
+                <div key={key} style={{ flex:1 }}>
+                  <label style={lbl}>{label}</label>
+                  <input style={inp} value={form[key]} placeholder={ph} onChange={e => setForm({...form,[key]:e.target.value})} />
+                </div>))}
+            </div>
+            <label style={lbl}>Description</label>
+            <textarea style={{ ...inp, resize:"vertical", minHeight:80 }} value={form.description} placeholder="Synopsis or notes" onChange={e => setForm({...form,description:e.target.value})} />
+            <label style={lbl}>Reading Status</label>
+            <select style={inp} value={form.status} onChange={e => setForm({...form,status:e.target.value})}>
+              {["Unread","Reading","Finished"].map(s => <option key={s}>{s}</option>)}
+            </select>
+            <label style={lbl}>Your Rating</label>
+            <StarRating value={form.rating} onChange={r => setForm({...form,rating:r})} />
+          </div>
+          <button onClick={saveBook} disabled={!form.title.trim()}
+            style={{ position:"fixed", bottom:20, left:20, right:20, zIndex:20,
+              background: form.title.trim() ? "linear-gradient(135deg,#7c3aed,#a855f7)" : "#2a2a45",
+              color:"#fff", border:"none", borderRadius:14, padding:14, fontWeight:700, fontSize:16,
+              cursor: form.title.trim() ? "pointer" : "not-allowed" }}>Save Book</button>
+        </div>
+      );
+
+      // ── Library ──────────────────────────────────────────────────────────────
+      return (
+        <div style={{ minHeight:"100vh", background:"#0d0d1a", color:"#e2e0f0", fontFamily:"'Inter',system-ui,sans-serif", paddingBottom:80 }}>
+          <div style={{ padding:"52px 20px 0", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+            <div style={{ fontSize:22, fontWeight:700, letterSpacing:"-0.5px" }}>my<span style={{ color:"#c084fc" }}>shelf</span></div>
+            <button onClick={startAdd} style={{ background:"linear-gradient(135deg,#7c3aed,#a855f7)", color:"#fff", border:"none", borderRadius:12, padding:"10px 18px", fontWeight:600, fontSize:14, cursor:"pointer" }}>+ Add Book</button>
+          </div>
+          <input placeholder="Search by title or author…" value={searchQ} onChange={e => setSearchQ(e.target.value)}
+            style={{ ...inp, margin:"16px 20px 0", width:"calc(100% - 40px)" }} />
+          <div style={{ display:"flex", gap:8, padding:"12px 20px 0", overflowX:"auto" }}>
+            {statuses.map(st => (
+              <button key={st} onClick={() => setFilter(st)}
+                style={{ background:filter===st?"#7c3aed":"#16162a", color:filter===st?"#fff":"#9090b0",
+                  border:`1px solid ${filter===st?"#7c3aed":"#2a2a45"}`, borderRadius:99,
+                  padding:"6px 14px", fontSize:12, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap" }}>
+                {st}{counts[st]>0?` (${counts[st]})`:""}
+              </button>))}
+          </div>
+          {filtered.length === 0
+            ? <div style={{ textAlign:"center", padding:"80px 40px" }}>
+                <div style={{ fontSize:56, marginBottom:16 }}>📚</div>
+                <div style={{ fontSize:18, fontWeight:700, marginBottom:8 }}>{books.length===0?"Your shelf is empty":"No books match"}</div>
+                <div style={{ fontSize:14, color:"#60608a" }}>{books.length===0?"Tap + Add Book and scan a barcode":"Try a different filter or search"}</div>
+              </div>
+            : <div style={{
+                display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",
+                gap:0, columnGap:16, padding:20,
+                background:"linear-gradient(#0d0d1a,#0d0d1a)"
+              }}>
+                {filtered.map(book => (
+                  <div key={book.id} style={{ paddingBottom:18, marginBottom:14,
+                    borderBottom:"10px solid transparent",
+                    borderImage:"linear-gradient(90deg,#3a2418,#6b4423,#3a2418) 1",
+                    borderImageSlice:1 }}>
+                  <div onClick={() => openDetail(book)}
+                    style={{ background:"#13132a", border:"1px solid #1e1e3a", borderRadius:"6px 8px 8px 6px",
+                      overflow:"hidden", cursor:"pointer", boxShadow:"3px 4px 10px rgba(0,0,0,0.5)",
+                      borderLeft:"4px solid rgba(192,132,252,0.35)" }}>
+                    {book.cover
+                      ? <img src={book.cover} alt={book.title} style={{ width:"100%", aspectRatio:"2/3", objectFit:"cover" }} />
+                      : <div style={{ width:"100%", aspectRatio:"2/3", background:"linear-gradient(135deg,#1a1a35,#2a1a4a)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:48, opacity:0.5 }}>📚</div>}
+                    <div style={{ padding:"10px 12px 14px" }}>
+                      <div style={{ fontSize:13, fontWeight:700, lineHeight:1.3, marginBottom:4 }}>{book.title||"Untitled"}</div>
+                      <div style={{ fontSize:11, color:"#7070a0", marginBottom:8 }}>{book.author||"Unknown"}</div>
+                      <StatusBadge status={book.status} />
+                      {book.rating>0 && <div style={{ marginTop:6 }}><StarRating value={book.rating} /></div>}
+                    </div>
+                  </div>
+                  </div>))}
+              </div>}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
+    // Register service worker for offline support.
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("/sw.js").catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>

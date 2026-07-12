@@ -26,13 +26,16 @@ async function handleLookup(context) {
   let result = null;
 
   // 1. Google Books (best coverage).
+  let gbVolumeId = null;
   try {
     const gbKey = env.GOOGLE_BOOKS_KEY;
     const keyParam = gbKey ? `&key=${gbKey}` : "";
     const gbRes = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}${keyParam}`);
     if (gbRes.ok) {
       const gb = await gbRes.json();
-      const info = gb.items && gb.items[0] && gb.items[0].volumeInfo;
+      const item = gb.items && gb.items[0];
+      const info = item && item.volumeInfo;
+      if (item) gbVolumeId = item.id || null;
       if (info) {
         result = {
           title: info.title || "",
@@ -110,9 +113,15 @@ async function handleLookup(context) {
     } catch {}
   }
 
-  // Fetch cover as a data URL (Google's first, then Open Library by ISBN).
+  // Fetch cover as a data URL, trying several sources in order:
+  //  1. Google Books imageLinks (if present)
+  //  2. Google Books content cover by volume id (works when imageLinks is absent)
+  //  3. Open Library by ISBN
   let cover = null;
   if (result._coverUrl) cover = await fetchCover(result._coverUrl);
+  if (!cover && gbVolumeId) {
+    cover = await fetchCover(`https://books.google.com/books/content?id=${gbVolumeId}&printsec=frontcover&img=1&zoom=1&source=gbs_api`);
+  }
   if (!cover) cover = await fetchCover(`https://covers.openlibrary.org/b/isbn/${isbn}-L.jpg`);
   delete result._coverUrl;
   result.cover = cover;

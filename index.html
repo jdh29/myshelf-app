@@ -107,18 +107,99 @@
       const [filter, setFilter]         = useState("All");
       const [searchQ, setSearchQ]       = useState("");
       const [scanningBarcode, setScanningBarcode] = useState(false);
+      const [syncCode, setSyncCode] = useState(() => localStorage.getItem("myshelf_synccode") || "");
+      const [syncCodeInput, setSyncCodeInput] = useState("");
+      const [syncStatus, setSyncStatus] = useState(""); // "", "syncing", "synced", "offline"
       const coverRef  = useRef();
       const barcodeScannerRef = useRef(null);
+      const saveTimer = useRef(null);
 
+      // Load: pull from cloud first (if we have a sync code), fall back to local.
       useEffect(() => {
-        const saved = localStorage.getItem(STORAGE_KEY);
-        if (saved) { try { setBooks(JSON.parse(saved)); } catch {} }
+        const local = localStorage.getItem(STORAGE_KEY);
+        if (local) { try { setBooks(JSON.parse(local)); } catch {} }
+        if (syncCode) {
+          setSyncStatus("syncing");
+          fetch(`/api/load?syncCode=${encodeURIComponent(syncCode)}`)
+            .then(r => r.json())
+            .then(data => {
+              if (data && Array.isArray(data.books)) {
+                setBooks(data.books);
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(data.books));
+                setSyncStatus("synced");
+              }
+            })
+            .catch(() => setSyncStatus("offline"));
+        }
       }, []);
 
+      // Save: always save locally now; push to cloud (debounced) if we have a code.
       const saveBooks = (updated) => {
         setBooks(updated);
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(updated)); }
         catch { alert("Couldn't save — device storage is full. Try removing a book."); }
+        if (syncCode) {
+          setSyncStatus("syncing");
+          if (saveTimer.current) clearTimeout(saveTimer.current);
+          saveTimer.current = setTimeout(() => {
+            fetch("/api/save", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ syncCode, books: updated }),
+            })
+              .then(r => r.json())
+              .then(res => setSyncStatus(res && res.ok ? "synced" : "offline"))
+              .catch(() => setSyncStatus("offline"));
+          }, 600);
+        }
+      };
+
+      // Connect a sync code: save it, then pull any existing cloud data.
+      const connectSync = () => {
+        const code = syncCodeInput.trim().toLowerCase();
+        if (code.length < 4) { alert("Sync code must be at least 4 characters."); return; }
+        localStorage.setItem("myshelf_synccode", code);
+        setSyncCode(code);
+        setSyncCodeInput("");
+        setSyncStatus("syncing");
+        fetch(`/api/load?syncCode=${encodeURIComponent(code)}`)
+          .then(r => r.json())
+          .then(data => {
+            if (data && Array.isArray(data.books) && data.books.length > 0) {
+              // Merge cloud books with any local-only ones (by id).
+              setBooks(prev => {
+                const byId = {};
+                [...data.books, ...prev].forEach(b => { byId[b.id] = byId[b.id] || b; });
+                const merged = Object.values(byId);
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+                // Push the merged set back up so both devices match.
+                fetch("/api/save", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ syncCode: code, books: merged }),
+                }).catch(() => {});
+                return merged;
+              });
+            } else {
+              // No cloud data yet — push whatever we have locally.
+              setBooks(prev => {
+                fetch("/api/save", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ syncCode: code, books: prev }),
+                }).catch(() => {});
+                return prev;
+              });
+            }
+            setSyncStatus("synced");
+          })
+          .catch(() => setSyncStatus("offline"));
+      };
+
+      const disconnectSync = () => {
+        localStorage.removeItem("myshelf_synccode");
+        setSyncCode("");
+        setSyncStatus("");
       };
 
       // ── Cover photo (view only, no scan) ─────────────────────────────────────
@@ -375,12 +456,73 @@
         </div>
       );
 
+      // ── Sync settings screen ──────────────────────────────────────────────────
+      if (view === "sync") {
+        const statusText = {
+          "": "Not connected",
+          "syncing": "Syncing…",
+          "synced": "✓ Synced",
+          "offline": "Offline — will sync when online",
+        }[syncStatus] || "";
+        return (
+          <div style={{ position:"fixed", inset:0, background:"#0d0d1a", overflowY:"auto", fontFamily:"'Inter',system-ui,sans-serif", color:"#e2e0f0" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:12, padding:"52px 20px 16px", borderBottom:"1px solid #1e1e3a" }}>
+              <button onClick={() => setView("library")} style={{ background:"none", border:"none", color:"#c084fc", fontSize:22, cursor:"pointer" }}>←</button>
+              <span style={{ fontSize:18, fontWeight:700 }}>Sync</span>
+            </div>
+            <div style={{ padding:"24px 20px" }}>
+              <p style={{ fontSize:14, color:"#9090b0", lineHeight:1.6, marginBottom:24 }}>
+                Enter the same sync code on your iPhone and iPad to keep your books in sync across both devices. Choose any private phrase you'll remember.
+              </p>
+              {syncCode ? (
+                <div>
+                  <div style={{ background:"#13132a", border:"1px solid #1e1e3a", borderRadius:12, padding:"16px", marginBottom:16 }}>
+                    <div style={{ fontSize:11, color:"#60608a", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6 }}>Connected as</div>
+                    <div style={{ fontSize:18, fontWeight:700, marginBottom:8 }}>{syncCode}</div>
+                    <div style={{ fontSize:13, color: syncStatus==="synced" ? "#4ade80" : "#a090c0" }}>{statusText}</div>
+                  </div>
+                  <button onClick={disconnectSync} style={{ width:"100%", background:"#2a1a1a", border:"1px solid #4a2020", borderRadius:12, padding:13, color:"#f87171", fontWeight:700, fontSize:14, cursor:"pointer" }}>
+                    Disconnect this device
+                  </button>
+                  <p style={{ fontSize:12, color:"#60608a", marginTop:12, lineHeight:1.5 }}>
+                    Disconnecting keeps your books on this device but stops syncing. Your cloud copy is untouched.
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <label style={{ ...lbl, marginTop:0 }}>Your sync code</label>
+                  <input value={syncCodeInput} onChange={e => setSyncCodeInput(e.target.value)}
+                    placeholder="e.g. james-books-2025"
+                    autoCapitalize="none" autoCorrect="off"
+                    style={{ ...inp, marginBottom:12 }} />
+                  <button onClick={connectSync} disabled={syncCodeInput.trim().length < 4}
+                    style={{ width:"100%", background: syncCodeInput.trim().length>=4 ? "linear-gradient(135deg,#7c3aed,#a855f7)" : "#2a2a45", color:"#fff", border:"none", borderRadius:12, padding:14, fontWeight:700, fontSize:16, cursor: syncCodeInput.trim().length>=4 ? "pointer" : "not-allowed" }}>
+                    Connect & Sync
+                  </button>
+                  <p style={{ fontSize:12, color:"#60608a", marginTop:12, lineHeight:1.5 }}>
+                    Tip: use something private but memorable. Anyone who enters the same code sees the same shelf.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+
       // ── Library ──────────────────────────────────────────────────────────────
+      const syncDot = { "syncing":"#f1c40f", "synced":"#4ade80", "offline":"#f87171", "":"#60608a" }[syncStatus] || "#60608a";
       return (
         <div style={{ minHeight:"100vh", background:"#0d0d1a", color:"#e2e0f0", fontFamily:"'Inter',system-ui,sans-serif", paddingBottom:80 }}>
           <div style={{ padding:"52px 20px 0", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
             <div style={{ fontSize:22, fontWeight:700, letterSpacing:"-0.5px" }}>my<span style={{ color:"#c084fc" }}>shelf</span></div>
-            <button onClick={startAdd} style={{ background:"linear-gradient(135deg,#7c3aed,#a855f7)", color:"#fff", border:"none", borderRadius:12, padding:"10px 18px", fontWeight:600, fontSize:14, cursor:"pointer" }}>+ Add Book</button>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <button onClick={() => setView("sync")} title="Sync"
+                style={{ background:"#1e1e3a", border:"1px solid #2a2a50", borderRadius:12, padding:"10px 12px", color:"#c084fc", fontWeight:600, fontSize:14, cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}>
+                <span style={{ width:8, height:8, borderRadius:99, background:syncDot, display:"inline-block" }}></span>
+                🔄
+              </button>
+              <button onClick={startAdd} style={{ background:"linear-gradient(135deg,#7c3aed,#a855f7)", color:"#fff", border:"none", borderRadius:12, padding:"10px 18px", fontWeight:600, fontSize:14, cursor:"pointer" }}>+ Add Book</button>
+            </div>
           </div>
           <input placeholder="Search by title or author…" value={searchQ} onChange={e => setSearchQ(e.target.value)}
             style={{ ...inp, margin:"16px 20px 0", width:"calc(100% - 40px)" }} />

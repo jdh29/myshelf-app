@@ -165,13 +165,14 @@
 
     // A wooden shelf holding a row of books (spines or covers).
     // One wooden shelf board with a row of books resting on it.
-    function ShelfRow({ books, mode, onOpen, ornament, rowHeight }) {
+    function ShelfRow({ books, mode, onOpen, rowHeight }) {
       return (
         <div>
           {mode === "spine" ? (
             <div style={{ display:"flex", alignItems:"flex-end", gap:3, height:rowHeight }}>
+              <img src="/bookend-l.png" alt="" style={{ height:"70%", alignSelf:"flex-end", flexShrink:0, marginRight:-2 }} />
               {books.map(b => <Spine key={b.id} book={b} onClick={() => onOpen(b)} />)}
-              {ornament && <div style={{ fontSize:32, alignSelf:"flex-end", marginLeft:10, opacity:0.85, flexShrink:0 }}>{ornament}</div>}
+              <img src="/bookend-r.png" alt="" style={{ height:"70%", alignSelf:"flex-end", flexShrink:0, marginLeft:-2 }} />
             </div>
           ) : (
             <div style={{ display:"flex", alignItems:"flex-end", gap:12, flexWrap:"nowrap" }}>
@@ -189,7 +190,6 @@
                     overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{b.title}</div>
                 </div>
               ))}
-              {ornament && <div style={{ fontSize:32, alignSelf:"flex-end", marginLeft:6, opacity:0.85, flexShrink:0 }}>{ornament}</div>}
             </div>
           )}
           {/* the wooden shelf board */}
@@ -202,7 +202,7 @@
     }
 
     // A labelled section that wraps its books onto as many shelf rows as needed.
-    function Shelf({ label, books, mode, onOpen, ornament }) {
+    function Shelf({ label, books, mode, onOpen }) {
       const ROW_H = mode === "spine" ? 200 : 175;
       // Rough per-item widths so we can split the list into rows that fit.
       const [perRow, setPerRow] = useState(10);
@@ -250,7 +250,7 @@
             ) : rows.map((row, i) => (
               <ShelfRow key={i} books={row} mode={mode} onOpen={onOpen}
                 rowHeight={ROW_H}
-                ornament={i === rows.length - 1 ? ornament : null} />
+                />
             ))}
           </div>
         </div>
@@ -736,9 +736,9 @@
               </div>
             ) : (
               <div>
-                <Shelf label="Currently Reading" books={reading}  mode={shelfMode} onOpen={openDetail} ornament="🕯️" />
-                <Shelf label="To Read"           books={unread}   mode={shelfMode} onOpen={openDetail} ornament="🪴" />
-                <Shelf label="Finished"          books={finished} mode={shelfMode} onOpen={openDetail} ornament="🦉" />
+                <Shelf label="Currently Reading" books={reading}  mode={shelfMode} onOpen={openDetail} />
+                <Shelf label="To Read"           books={unread}   mode={shelfMode} onOpen={openDetail} />
+                <Shelf label="Finished"          books={finished} mode={shelfMode} onOpen={openDetail} />
               </div>
             )}
           </div>

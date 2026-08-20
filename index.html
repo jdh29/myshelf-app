@@ -18,6 +18,7 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     html, body, #root { height: 100%; background: #0d1712; }
+    body { overflow-x: hidden; }
     body { overscroll-behavior: none; }
     ::-webkit-scrollbar { display: none; }
     select option { background: #14251b; color: #efe6d2; }
@@ -114,8 +115,8 @@
       for (let i = 0; i < s.length; i++) h = (h * 17 + s.charCodeAt(i)) >>> 0;
       const pages = parseInt(book.pages, 10);
       const widthBase = pages && !isNaN(pages)
-        ? Math.max(26, Math.min(56, Math.round(pages / 12)))
-        : 34 + (h % 18);
+        ? Math.max(24, Math.min(48, Math.round(pages / 14)))
+        : 30 + (h % 14);
       return { w: widthBase, hPct: 88 + (h % 12) }; // height 88–99% of shelf
     }
 
@@ -163,21 +164,29 @@
       );
     }
 
-    // A wooden shelf holding a row of books (spines or covers).
+    const BOOKEND_W = 34;   // rendered width of each bookend
+    const SPINE_GAP = 3;
+    const COVER_W   = 92;
+    const COVER_GAP = 12;
+
     // One wooden shelf board with a row of books resting on it.
-    function ShelfRow({ books, mode, onOpen, rowHeight }) {
+    function ShelfRow({ books, mode, onOpen, rowHeight, showEnds }) {
       return (
         <div>
           {mode === "spine" ? (
-            <div style={{ display:"flex", alignItems:"flex-end", gap:3, height:rowHeight }}>
-              <img src="/bookend-l.png" alt="" style={{ height:"70%", alignSelf:"flex-end", flexShrink:0, marginRight:-2 }} />
+            <div style={{ display:"flex", alignItems:"flex-end", justifyContent:"flex-start",
+              gap:SPINE_GAP, height:rowHeight, overflow:"hidden" }}>
+              {showEnds && <img src="/bookend-l.png" alt=""
+                style={{ width:BOOKEND_W, alignSelf:"flex-end", flexShrink:0, marginRight:-2 }} />}
               {books.map(b => <Spine key={b.id} book={b} onClick={() => onOpen(b)} />)}
-              <img src="/bookend-r.png" alt="" style={{ height:"70%", alignSelf:"flex-end", flexShrink:0, marginLeft:-2 }} />
+              {showEnds && <img src="/bookend-r.png" alt=""
+                style={{ width:BOOKEND_W, alignSelf:"flex-end", flexShrink:0, marginLeft:-2 }} />}
             </div>
           ) : (
-            <div style={{ display:"flex", alignItems:"flex-end", gap:12, flexWrap:"nowrap" }}>
+            <div style={{ display:"flex", alignItems:"flex-end", gap:COVER_GAP,
+              flexWrap:"nowrap", overflow:"hidden" }}>
               {books.map(b => (
-                <div key={b.id} onClick={() => onOpen(b)} style={{ width:92, flexShrink:0, cursor:"pointer" }}>
+                <div key={b.id} onClick={() => onOpen(b)} style={{ width:COVER_W, flexShrink:0, cursor:"pointer" }}>
                   {b.cover
                     ? <img src={b.cover} alt={b.title}
                         style={{ width:"100%", aspectRatio:"2/3", objectFit:"cover", borderRadius:3,
@@ -201,27 +210,54 @@
       );
     }
 
-    // A labelled section that wraps its books onto as many shelf rows as needed.
+    // A labelled section that packs its books onto as many shelf rows as fit.
     function Shelf({ label, books, mode, onOpen }) {
-      const ROW_H = mode === "spine" ? 200 : 175;
-      // Rough per-item widths so we can split the list into rows that fit.
-      const [perRow, setPerRow] = useState(10);
-      useEffect(() => {
-        const calc = () => {
-          const avail = Math.min(window.innerWidth, 1400) - 60;
-          const itemW = mode === "spine" ? 46 : 104;
-          setPerRow(Math.max(3, Math.floor(avail / itemW)));
-        };
-        calc();
-        window.addEventListener("resize", calc);
-        return () => window.removeEventListener("resize", calc);
-      }, [mode]);
+      const ROW_H = mode === "spine" ? 190 : 175;
+      const wrapRef = useRef(null);
+      const [avail, setAvail] = useState(0);
 
+      // Measure the real inner width of this shelf so rows pack accurately.
+      useEffect(() => {
+        const el = wrapRef.current;
+        if (!el) return;
+        const measure = () => setAvail(el.clientWidth);
+        measure();
+        let ro;
+        if (typeof ResizeObserver !== "undefined") {
+          ro = new ResizeObserver(measure);
+          ro.observe(el);
+        }
+        window.addEventListener("resize", measure);
+        window.addEventListener("orientationchange", measure);
+        return () => {
+          if (ro) ro.disconnect();
+          window.removeEventListener("resize", measure);
+          window.removeEventListener("orientationchange", measure);
+        };
+      }, []);
+
+      // Pack books into rows using each book's actual rendered width.
       const rows = [];
-      for (let i = 0; i < books.length; i += perRow) rows.push(books.slice(i, i + perRow));
+      if (books.length) {
+        const usable = Math.max(120, avail || 320);
+        if (mode === "spine") {
+          // bookends sit at both ends of every row
+          const budget = usable - (BOOKEND_W * 2) - 6;
+          let row = [], used = 0;
+          for (const b of books) {
+            const w = spineDims(b).w + SPINE_GAP;
+            if (row.length && used + w > budget) { rows.push(row); row = []; used = 0; }
+            row.push(b); used += w;
+          }
+          if (row.length) rows.push(row);
+        } else {
+          const per = Math.max(1, Math.floor((usable + COVER_GAP) / (COVER_W + COVER_GAP)));
+          for (let i = 0; i < books.length; i += per) rows.push(books.slice(i, i + per));
+        }
+      }
 
       return (
-        <div style={{ marginBottom: 26 }}>
+        <div style={{ marginBottom: 22 }}>
           {/* brass label plate */}
           <div style={{ display:"flex", justifyContent:"center", marginBottom:-1 }}>
             <div style={{
@@ -232,14 +268,15 @@
               fontFamily:"Georgia, serif", boxShadow:"0 2px 4px rgba(0,0,0,0.4)",
             }}>{label}{books.length ? ` · ${books.length}` : ""}</div>
           </div>
-          <div style={{
+          <div ref={wrapRef} style={{
             background:"linear-gradient(180deg, rgba(10,20,14,0.55), rgba(6,12,9,0.75))",
             border:"1px solid #2a3f2f", borderTop:"none",
-            borderRadius:"0 0 6px 6px", padding:"14px 12px 0",
+            borderRadius:"0 0 6px 6px", padding:"12px 10px 0",
+            overflow:"hidden",
           }}>
             {books.length === 0 ? (
               <div>
-                <div style={{ color:"#5d7263", fontSize:13, textAlign:"center", padding:"22px 0 26px", fontStyle:"italic" }}>
+                <div style={{ color:"#5d7263", fontSize:13, textAlign:"center", padding:"18px 0 22px", fontStyle:"italic" }}>
                   Empty shelf
                 </div>
                 <div style={{ height:14, marginTop:4, marginBottom:4,
@@ -249,8 +286,7 @@
               </div>
             ) : rows.map((row, i) => (
               <ShelfRow key={i} books={row} mode={mode} onOpen={onOpen}
-                rowHeight={ROW_H}
-                />
+                rowHeight={ROW_H} showEnds={mode === "spine"} />
             ))}
           </div>
         </div>
@@ -727,7 +763,7 @@
             ))}
           </div>
 
-          <div style={{ padding:"0 16px" }}>
+          <div style={{ padding:"0 10px" }}>
             {books.length === 0 ? (
               <div style={{ textAlign:"center", padding:"70px 40px" }}>
                 <div style={{ fontSize:56, marginBottom:16 }}>📚</div>

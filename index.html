@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#0d0d1a" />
+  <meta name="theme-color" content="#0d1712" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="myshelf" />
@@ -17,10 +17,10 @@
   <script src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-    html, body, #root { height: 100%; background: #0d0d1a; }
+    html, body, #root { height: 100%; background: #0d1712; }
     body { overscroll-behavior: none; }
     ::-webkit-scrollbar { display: none; }
-    select option { background: #16162a; color: #e2e0f0; }
+    select option { background: #14251b; color: #efe6d2; }
   </style>
 </head>
 <body>
@@ -76,7 +76,7 @@
               onMouseEnter={() => onChange && setHovered(star)}
               onMouseLeave={() => onChange && setHovered(0)}
               style={{ fontSize: 22, cursor: onChange ? "pointer" : "default",
-                color: star <= (hovered || value) ? "#c084fc" : "#3f3f5a",
+                color: star <= (hovered || value) ? "#d9b64e" : "#3c4a3f",
                 transition: "color 0.15s", userSelect: "none" }}>★</span>
           ))}
         </div>
@@ -85,14 +85,142 @@
 
     function StatusBadge({ status }) {
       const colors = {
-        "Unread":   { bg: "#1e1b3a", text: "#a78bfa", border: "#4c1d95" },
-        "Reading":  { bg: "#1a2a1a", text: "#4ade80", border: "#166534" },
-        "Finished": { bg: "#1a1a2e", text: "#60a5fa", border: "#1e3a5f" },
+        "Unread":   { bg: "#2a2416", text: "#d9c47e", border: "#5c4a24" },
+        "Reading":  { bg: "#16301f", text: "#7fc98d", border: "#2f5c3a" },
+        "Finished": { bg: "#1b2a30", text: "#8fc4d8", border: "#2d4d5a" },
       };
       const c = colors[status] || colors["Unread"];
       return <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.06em",
         textTransform: "uppercase", padding: "3px 10px", borderRadius: 99,
         background: c.bg, color: c.text, border: `1px solid ${c.border}` }}>{status}</span>;
+    }
+
+    // Derive a stable spine colour from a book's title (used when no cover colour).
+    const SPINE_PALETTE = [
+      "#5c1f1f", "#1f3a5c", "#26402a", "#4a2f5c", "#5c4420",
+      "#1f4a4a", "#5c2a3a", "#2f3a1f", "#3a2418", "#1f2f4a",
+    ];
+    function spineColorFor(book) {
+      if (book.spineColor) return book.spineColor;
+      const s = (book.title || "") + (book.author || "");
+      let h = 0;
+      for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+      return SPINE_PALETTE[h % SPINE_PALETTE.length];
+    }
+    // Vary height/width a little so the shelf looks natural, but stably per book.
+    function spineDims(book) {
+      const s = (book.title || "") + (book.id || "");
+      let h = 0;
+      for (let i = 0; i < s.length; i++) h = (h * 17 + s.charCodeAt(i)) >>> 0;
+      const pages = parseInt(book.pages, 10);
+      const widthBase = pages && !isNaN(pages)
+        ? Math.max(26, Math.min(56, Math.round(pages / 12)))
+        : 34 + (h % 18);
+      return { w: widthBase, hPct: 82 + (h % 17) }; // height 82–98% of shelf
+    }
+
+    function Spine({ book, onClick }) {
+      const col = spineColorFor(book);
+      const { w, hPct } = spineDims(book);
+      const title = (book.title || "Untitled");
+      const shown = title.length > 26 ? title.slice(0, 25) + "…" : title;
+      // If the user supplied a real spine photo, show that instead.
+      if (book.spineImage) {
+        return (
+          <div onClick={onClick} title={title}
+            style={{ width:w, height:`${hPct}%`, alignSelf:"flex-end", cursor:"pointer",
+              borderRadius:"2px 3px 3px 2px", overflow:"hidden", flexShrink:0,
+              boxShadow:"2px 3px 7px rgba(0,0,0,0.55)" }}>
+            <img src={book.spineImage} alt={title}
+              style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }} />
+          </div>
+        );
+      }
+      return (
+        <div onClick={onClick} title={title}
+          style={{
+            width: w, height: `${hPct}%`, alignSelf: "flex-end", flexShrink: 0,
+            cursor: "pointer", position: "relative",
+            borderRadius: "2px 3px 3px 2px",
+            background: `linear-gradient(90deg, rgba(0,0,0,0.45) 0%, ${col} 18%, ${col} 72%, rgba(0,0,0,0.35) 100%)`,
+            boxShadow: "2px 3px 7px rgba(0,0,0,0.55)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            overflow: "hidden",
+          }}>
+          {/* gilt bands top and bottom */}
+          <div style={{ position:"absolute", top:"7%", left:3, right:3, height:2, background:"rgba(214,183,110,0.75)" }} />
+          <div style={{ position:"absolute", top:"12%", left:3, right:3, height:1, background:"rgba(214,183,110,0.45)" }} />
+          <div style={{ position:"absolute", bottom:"9%", left:3, right:3, height:2, background:"rgba(214,183,110,0.75)" }} />
+          <div style={{ position:"absolute", bottom:"14%", left:3, right:3, height:1, background:"rgba(214,183,110,0.45)" }} />
+          <div style={{
+            writingMode: "vertical-rl", transform: "rotate(180deg)",
+            color: "#e8dcb8", fontSize: w > 42 ? 12 : 10, fontWeight: 700,
+            letterSpacing: "0.04em", whiteSpace: "nowrap",
+            maxHeight: "72%", overflow: "hidden", textShadow: "0 1px 2px rgba(0,0,0,0.6)",
+            fontFamily: "Georgia, 'Times New Roman', serif",
+          }}>{shown}</div>
+        </div>
+      );
+    }
+
+    // A wooden shelf holding a row of books (spines or covers).
+    function Shelf({ label, books, mode, onOpen, ornament }) {
+      return (
+        <div style={{ marginBottom: 26 }}>
+          {/* brass label plate */}
+          <div style={{ display:"flex", justifyContent:"center", marginBottom:-1 }}>
+            <div style={{
+              background:"linear-gradient(180deg,#4a3a1c,#2e2412)",
+              border:"1px solid #6b5426", borderRadius:4,
+              padding:"3px 16px", color:"#e0c983", fontSize:11, fontWeight:700,
+              letterSpacing:"0.14em", textTransform:"uppercase",
+              fontFamily:"Georgia, serif", boxShadow:"0 2px 4px rgba(0,0,0,0.4)",
+            }}>{label}{books.length ? ` · ${books.length}` : ""}</div>
+          </div>
+          <div style={{
+            background:"linear-gradient(180deg, rgba(10,20,14,0.55), rgba(6,12,9,0.75))",
+            border:"1px solid #2a3f2f", borderTop:"none",
+            borderRadius:"0 0 6px 6px", padding:"14px 12px 0",
+            minHeight: mode === "spine" ? 150 : 120,
+          }}>
+            {books.length === 0 ? (
+              <div style={{ color:"#5d7263", fontSize:13, textAlign:"center", padding:"28px 0 34px", fontStyle:"italic" }}>
+                Empty shelf
+              </div>
+            ) : mode === "spine" ? (
+              <div style={{ display:"flex", alignItems:"flex-end", gap:3, height:150,
+                overflowX:"auto", paddingBottom:0 }}>
+                {books.map(b => <Spine key={b.id} book={b} onClick={() => onOpen(b)} />)}
+                {ornament && <div style={{ fontSize:34, alignSelf:"flex-end", marginLeft:8, opacity:0.85, flexShrink:0 }}>{ornament}</div>}
+              </div>
+            ) : (
+              <div style={{ display:"flex", alignItems:"flex-end", gap:12, overflowX:"auto", paddingBottom:6 }}>
+                {books.map(b => (
+                  <div key={b.id} onClick={() => onOpen(b)}
+                    style={{ width:92, flexShrink:0, cursor:"pointer" }}>
+                    {b.cover
+                      ? <img src={b.cover} alt={b.title}
+                          style={{ width:"100%", aspectRatio:"2/3", objectFit:"cover", borderRadius:3,
+                            boxShadow:"2px 4px 9px rgba(0,0,0,0.6)" }} />
+                      : <div style={{ width:"100%", aspectRatio:"2/3", borderRadius:3,
+                          background:"linear-gradient(135deg,#22331f,#16251a)", display:"flex",
+                          alignItems:"center", justifyContent:"center", fontSize:30, opacity:0.6,
+                          boxShadow:"2px 4px 9px rgba(0,0,0,0.6)" }}>📗</div>}
+                    <div style={{ fontSize:11, color:"#c9bb95", marginTop:5, lineHeight:1.25,
+                      overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{b.title}</div>
+                  </div>
+                ))}
+                {ornament && <div style={{ fontSize:34, alignSelf:"flex-end", marginLeft:4, opacity:0.85, flexShrink:0 }}>{ornament}</div>}
+              </div>
+            )}
+            {/* the wooden shelf board */}
+            <div style={{ height:14, marginTop:4,
+              background:"linear-gradient(180deg,#7a4f2a 0%,#5e3b20 55%,#3d2614 100%)",
+              borderRadius:"2px 2px 4px 4px",
+              boxShadow:"0 4px 8px rgba(0,0,0,0.6), inset 0 1px 0 rgba(190,140,80,0.5)" }} />
+          </div>
+        </div>
+      );
     }
 
     function App() {
@@ -110,6 +238,7 @@
       const [syncCode, setSyncCode] = useState(() => localStorage.getItem("myshelf_synccode") || "");
       const [syncCodeInput, setSyncCodeInput] = useState("");
       const [syncStatus, setSyncStatus] = useState(""); // "", "syncing", "synced", "offline"
+      const [shelfMode, setShelfMode] = useState(() => localStorage.getItem("myshelf_mode") || "spine");
       const coverRef  = useRef();
       const barcodeScannerRef = useRef(null);
       const saveTimer = useRef(null);
@@ -313,57 +442,57 @@
         "Reading": books.filter(b => b.status==="Reading").length,
         "Finished": books.filter(b => b.status==="Finished").length };
 
-      const inp = { width:"100%", background:"#16162a", border:"1px solid #2a2a45",
-        borderRadius:10, padding:"10px 14px", color:"#e2e0f0", fontSize:14, outline:"none", boxSizing:"border-box" };
-      const lbl = { fontSize:12, fontWeight:600, color:"#7070a0", textTransform:"uppercase",
-        letterSpacing:"0.06em", marginBottom:6, display:"block", marginTop:16 };
-      const btnSec = { background:"#1e1e3a", border:"1px solid #2a2a50", borderRadius:12,
-        padding:11, color:"#c084fc", fontWeight:600, fontSize:13, cursor:"pointer" };
+      const inp = { width:"100%", background:"#14251b", border:"1px solid #2c4433",
+        borderRadius:10, padding:"10px 14px", color:"#efe6d2", fontSize:14, outline:"none", boxSizing:"border-box" };
+      const lbl = { fontSize:12, fontWeight:600, color:"#a68f5b", textTransform:"uppercase",
+        letterSpacing:"0.08em", marginBottom:6, display:"block", marginTop:16 };
+      const btnSec = { background:"#1b3024", border:"1px solid #33513c", borderRadius:12,
+        padding:11, color:"#d9c47e", fontWeight:600, fontSize:13, cursor:"pointer" };
 
       // ── Detail ──────────────────────────────────────────────────────────────
       if (view === "detail" && selected) {
         const book = books.find(b => b.id === selected.id) || selected;
         return (
-          <div style={{ position:"fixed", inset:0, background:"#0d0d1a", overflowY:"auto", fontFamily:"'Inter',system-ui,sans-serif", color:"#e2e0f0" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:12, padding:"52px 20px 16px", borderBottom:"1px solid #1e1e3a" }}>
-              <button onClick={() => setView("library")} style={{ background:"none", border:"none", color:"#c084fc", fontSize:22, cursor:"pointer" }}>←</button>
+          <div style={{ position:"fixed", inset:0, background:"#0d1712", overflowY:"auto", fontFamily:"'Inter',system-ui,sans-serif", color:"#efe6d2" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:12, padding:"52px 20px 16px", borderBottom:"1px solid #2a3f2f" }}>
+              <button onClick={() => setView("library")} style={{ background:"none", border:"none", color:"#d9c47e", fontSize:22, cursor:"pointer" }}>←</button>
               <span style={{ fontSize:18, fontWeight:700 }}>Book Details</span>
             </div>
             {book.cover
-              ? <img src={book.cover} alt={book.title} style={{ width:"100%", maxHeight:300, objectFit:"contain", background:"#13132a" }} />
-              : <div style={{ width:"100%", height:180, background:"#13132a", display:"flex", alignItems:"center", justifyContent:"center", fontSize:72 }}>📚</div>}
+              ? <img src={book.cover} alt={book.title} style={{ width:"100%", maxHeight:300, objectFit:"contain", background:"#14251b" }} />
+              : <div style={{ width:"100%", height:180, background:"#14251b", display:"flex", alignItems:"center", justifyContent:"center", fontSize:72 }}>📚</div>}
             <div style={{ padding:"24px 20px 80px" }}>
               <div style={{ fontSize:24, fontWeight:800, lineHeight:1.2, marginBottom:6 }}>{book.title||"Untitled"}</div>
-              <div style={{ fontSize:16, color:"#a090c0", marginBottom:16 }}>{book.author||"Unknown Author"}</div>
+              <div style={{ fontSize:16, color:"#bda97a", marginBottom:16 }}>{book.author||"Unknown Author"}</div>
 
               {/* Status switcher */}
               <div style={{ display:"flex", gap:8, marginBottom:20 }}>
                 {["Unread","Reading","Finished"].map(s => (
                   <button key={s} onClick={() => setStatus(book, s)}
                     style={{ flex:1, padding:"8px 4px", borderRadius:10, fontSize:12, fontWeight:700, cursor:"pointer",
-                      background: book.status===s ? "#7c3aed" : "#16162a",
+                      background: book.status===s ? "#3d6b45" : "#16261c",
                       color: book.status===s ? "#fff" : "#9090b0",
-                      border: `1px solid ${book.status===s ? "#7c3aed" : "#2a2a45"}` }}>{s}</button>
+                      border: `1px solid ${book.status===s ? "#57804f" : "#2a3f2f"}` }}>{s}</button>
                 ))}
               </div>
 
               <div style={{ marginBottom:20 }}><StarRating value={book.rating} onChange={r => { saveBooks(books.map(b => b.id===book.id?{...b,rating:r}:b)); setSelected({...book,rating:r}); }} /></div>
 
-              {book.description && <p style={{ fontSize:14, color:"#9090b0", lineHeight:1.6, marginBottom:20 }}>{book.description}</p>}
+              {book.description && <p style={{ fontSize:14, color:"#a8b5a5", lineHeight:1.6, marginBottom:20 }}>{book.description}</p>}
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:20 }}>
                 {[["Pages",book.pages],["Year",book.year],["Genre",book.genre],["Publisher",book.publisher]].map(([label,val]) =>
-                  val ? <div key={label} style={{ background:"#13132a", border:"1px solid #1e1e3a", borderRadius:12, padding:"12px 14px" }}>
-                    <div style={{ fontSize:11, color:"#60608a", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:4 }}>{label}</div>
+                  val ? <div key={label} style={{ background:"#14251b", border:"1px solid #2a3f2f", borderRadius:12, padding:"12px 14px" }}>
+                    <div style={{ fontSize:11, color:"#7f9285", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:4 }}>{label}</div>
                     <div style={{ fontSize:15, fontWeight:600 }}>{val}</div>
                   </div> : null)}
-                {book.isbn && <div style={{ background:"#13132a", border:"1px solid #1e1e3a", borderRadius:12, padding:"12px 14px", gridColumn:"1/-1" }}>
-                  <div style={{ fontSize:11, color:"#60608a", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:4 }}>ISBN</div>
+                {book.isbn && <div style={{ background:"#14251b", border:"1px solid #2a3f2f", borderRadius:12, padding:"12px 14px", gridColumn:"1/-1" }}>
+                  <div style={{ fontSize:11, color:"#7f9285", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:4 }}>ISBN</div>
                   <div style={{ fontSize:15, fontWeight:600 }}>{book.isbn}</div>
                 </div>}
               </div>
               <div style={{ display:"flex", gap:10 }}>
-                <button onClick={() => editBook(book)} style={{ flex:1, background:"#1e1e3a", border:"1px solid #2a2a50", borderRadius:12, padding:12, color:"#c084fc", fontWeight:700, fontSize:14, cursor:"pointer" }}>✏️ Edit</button>
-                <button onClick={() => deleteBook(book.id)} style={{ flex:1, background:"#2a1a1a", border:"1px solid #4a2020", borderRadius:12, padding:12, color:"#f87171", fontWeight:700, fontSize:14, cursor:"pointer" }}>🗑 Delete</button>
+                <button onClick={() => editBook(book)} style={{ flex:1, background:"#1b3024", border:"1px solid #33513c", borderRadius:12, padding:12, color:"#d9c47e", fontWeight:700, fontSize:14, cursor:"pointer" }}>✏️ Edit</button>
+                <button onClick={() => deleteBook(book.id)} style={{ flex:1, background:"#301a1a", border:"1px solid #5c2a2a", borderRadius:12, padding:12, color:"#f87171", fontWeight:700, fontSize:14, cursor:"pointer" }}>🗑 Delete</button>
               </div>
             </div>
           </div>
@@ -372,42 +501,42 @@
 
       // ── Add / Edit ───────────────────────────────────────────────────────────
       if (view === "add") return (
-        <div style={{ position:"fixed", inset:0, background:"#0d0d1a", overflowY:"auto", fontFamily:"'Inter',system-ui,sans-serif", color:"#e2e0f0", paddingBottom:80 }}>
+        <div style={{ position:"fixed", inset:0, background:"#0d1712", overflowY:"auto", fontFamily:"'Inter',system-ui,sans-serif", color:"#efe6d2", paddingBottom:80 }}>
           {scanningBarcode && (
             <div style={{ position:"fixed", inset:0, background:"#000", zIndex:100, display:"flex", flexDirection:"column" }}>
               <div style={{ padding:"52px 20px 16px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
                 <span style={{ fontSize:16, fontWeight:700, color:"#fff" }}>Point camera at barcode</span>
-                <button onClick={stopBarcodeScan} style={{ background:"#2a2a45", border:"none", borderRadius:10, padding:"8px 16px", color:"#fff", fontWeight:600, fontSize:14, cursor:"pointer" }}>Cancel</button>
+                <button onClick={stopBarcodeScan} style={{ background:"#24382b", border:"none", borderRadius:10, padding:"8px 16px", color:"#fff", fontWeight:600, fontSize:14, cursor:"pointer" }}>Cancel</button>
               </div>
               <div id="barcode-reader" style={{ width:"100%", flex:1, position:"relative", overflow:"hidden" }}>
                 <video id="zxing-video" style={{ width:"100%", height:"100%", objectFit:"cover" }} muted playsInline></video>
               </div>
-              <div style={{ padding:20, textAlign:"center", color:"#9090b0", fontSize:13 }}>Line up the barcode — hold steady</div>
+              <div style={{ padding:20, textAlign:"center", color:"#a8b5a5", fontSize:13 }}>Line up the barcode — hold steady</div>
             </div>
           )}
-          <div style={{ display:"flex", alignItems:"center", gap:12, padding:"52px 20px 16px", borderBottom:"1px solid #1e1e3a" }}>
-            <button onClick={() => setView("library")} style={{ background:"none", border:"none", color:"#c084fc", fontSize:22, cursor:"pointer" }}>←</button>
+          <div style={{ display:"flex", alignItems:"center", gap:12, padding:"52px 20px 16px", borderBottom:"1px solid #2a3f2f" }}>
+            <button onClick={() => setView("library")} style={{ background:"none", border:"none", color:"#d9c47e", fontSize:22, cursor:"pointer" }}>←</button>
             <span style={{ fontSize:18, fontWeight:700 }}>{form.id && books.find(b => b.id === form.id) ? "Edit Book" : "Add Book"}</span>
           </div>
           <div style={{ padding:"20px 20px 0" }}>
-            <div style={{ width:"100%", height:200, borderRadius:16, overflow:"hidden", background:"#13132a",
+            <div style={{ width:"100%", height:200, borderRadius:16, overflow:"hidden", background:"#14251b",
               border:"2px dashed #2a2a50", display:"flex", alignItems:"center", justifyContent:"center",
               marginBottom:12, position:"relative" }}>
               {previewImg
                 ? <img src={previewImg} alt="cover" style={{ width:"100%", height:"100%", objectFit:"contain" }} />
                 : <div style={{ textAlign:"center" }}>
                     <div style={{ fontSize:40, marginBottom:8 }}>📚</div>
-                    <div style={{ fontSize:13, color:"#60608a" }}>Scan a barcode to auto-fill</div>
+                    <div style={{ fontSize:13, color:"#7f9285" }}>Scan a barcode to auto-fill</div>
                   </div>}
               {scanning && (
                 <div style={{ position:"absolute", inset:0, background:"rgba(13,13,26,0.9)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:10 }}>
                   <div style={{ fontSize:28 }}>🔍</div>
-                  <div style={{ color:"#c084fc", fontWeight:600, fontSize:14 }}>{scanMsg}</div>
+                  <div style={{ color:"#d9c47e", fontWeight:600, fontSize:14 }}>{scanMsg}</div>
                 </div>)}
             </div>
             {scanError && <div style={{ color:"#f87171", fontSize:13, marginBottom:8, textAlign:"center" }}>{scanError}</div>}
 
-            <button onClick={startBarcodeScan} style={{ ...btnSec, width:"100%", marginBottom:8, background:"linear-gradient(135deg,#7c3aed,#a855f7)", color:"#fff", border:"none", fontSize:15, padding:13 }}>
+            <button onClick={startBarcodeScan} style={{ ...btnSec, width:"100%", marginBottom:8, background:"linear-gradient(135deg,#3d6b45,#2b5133)", color:"#fff", border:"none", fontSize:15, padding:13 }}>
               📊 Scan Barcode
             </button>
             <button onClick={async () => {
@@ -450,7 +579,7 @@
           </div>
           <button onClick={saveBook} disabled={!form.title.trim()}
             style={{ position:"fixed", bottom:20, left:20, right:20, zIndex:20,
-              background: form.title.trim() ? "linear-gradient(135deg,#7c3aed,#a855f7)" : "#2a2a45",
+              background: form.title.trim() ? "linear-gradient(135deg,#3d6b45,#2b5133)" : "#2a2a45",
               color:"#fff", border:"none", borderRadius:14, padding:14, fontWeight:700, fontSize:16,
               cursor: form.title.trim() ? "pointer" : "not-allowed" }}>Save Book</button>
         </div>
@@ -465,26 +594,26 @@
           "offline": "Offline — will sync when online",
         }[syncStatus] || "";
         return (
-          <div style={{ position:"fixed", inset:0, background:"#0d0d1a", overflowY:"auto", fontFamily:"'Inter',system-ui,sans-serif", color:"#e2e0f0" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:12, padding:"52px 20px 16px", borderBottom:"1px solid #1e1e3a" }}>
-              <button onClick={() => setView("library")} style={{ background:"none", border:"none", color:"#c084fc", fontSize:22, cursor:"pointer" }}>←</button>
+          <div style={{ position:"fixed", inset:0, background:"#0d1712", overflowY:"auto", fontFamily:"'Inter',system-ui,sans-serif", color:"#efe6d2" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:12, padding:"52px 20px 16px", borderBottom:"1px solid #2a3f2f" }}>
+              <button onClick={() => setView("library")} style={{ background:"none", border:"none", color:"#d9c47e", fontSize:22, cursor:"pointer" }}>←</button>
               <span style={{ fontSize:18, fontWeight:700 }}>Sync</span>
             </div>
             <div style={{ padding:"24px 20px" }}>
-              <p style={{ fontSize:14, color:"#9090b0", lineHeight:1.6, marginBottom:24 }}>
+              <p style={{ fontSize:14, color:"#a8b5a5", lineHeight:1.6, marginBottom:24 }}>
                 Enter the same sync code on your iPhone and iPad to keep your books in sync across both devices. Choose any private phrase you'll remember.
               </p>
               {syncCode ? (
                 <div>
-                  <div style={{ background:"#13132a", border:"1px solid #1e1e3a", borderRadius:12, padding:"16px", marginBottom:16 }}>
-                    <div style={{ fontSize:11, color:"#60608a", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6 }}>Connected as</div>
+                  <div style={{ background:"#14251b", border:"1px solid #2a3f2f", borderRadius:12, padding:"16px", marginBottom:16 }}>
+                    <div style={{ fontSize:11, color:"#7f9285", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6 }}>Connected as</div>
                     <div style={{ fontSize:18, fontWeight:700, marginBottom:8 }}>{syncCode}</div>
                     <div style={{ fontSize:13, color: syncStatus==="synced" ? "#4ade80" : "#a090c0" }}>{statusText}</div>
                   </div>
-                  <button onClick={disconnectSync} style={{ width:"100%", background:"#2a1a1a", border:"1px solid #4a2020", borderRadius:12, padding:13, color:"#f87171", fontWeight:700, fontSize:14, cursor:"pointer" }}>
+                  <button onClick={disconnectSync} style={{ width:"100%", background:"#301a1a", border:"1px solid #5c2a2a", borderRadius:12, padding:13, color:"#f87171", fontWeight:700, fontSize:14, cursor:"pointer" }}>
                     Disconnect this device
                   </button>
-                  <p style={{ fontSize:12, color:"#60608a", marginTop:12, lineHeight:1.5 }}>
+                  <p style={{ fontSize:12, color:"#7f9285", marginTop:12, lineHeight:1.5 }}>
                     Disconnecting keeps your books on this device but stops syncing. Your cloud copy is untouched.
                   </p>
                 </div>
@@ -496,10 +625,10 @@
                     autoCapitalize="none" autoCorrect="off"
                     style={{ ...inp, marginBottom:12 }} />
                   <button onClick={connectSync} disabled={syncCodeInput.trim().length < 4}
-                    style={{ width:"100%", background: syncCodeInput.trim().length>=4 ? "linear-gradient(135deg,#7c3aed,#a855f7)" : "#2a2a45", color:"#fff", border:"none", borderRadius:12, padding:14, fontWeight:700, fontSize:16, cursor: syncCodeInput.trim().length>=4 ? "pointer" : "not-allowed" }}>
+                    style={{ width:"100%", background: syncCodeInput.trim().length>=4 ? "linear-gradient(135deg,#3d6b45,#2b5133)" : "#2a2a45", color:"#fff", border:"none", borderRadius:12, padding:14, fontWeight:700, fontSize:16, cursor: syncCodeInput.trim().length>=4 ? "pointer" : "not-allowed" }}>
                     Connect & Sync
                   </button>
-                  <p style={{ fontSize:12, color:"#60608a", marginTop:12, lineHeight:1.5 }}>
+                  <p style={{ fontSize:12, color:"#7f9285", marginTop:12, lineHeight:1.5 }}>
                     Tip: use something private but memorable. Anyone who enters the same code sees the same shelf.
                   </p>
                 </div>
@@ -509,64 +638,66 @@
         );
       }
 
-      // ── Library ──────────────────────────────────────────────────────────────
-      const syncDot = { "syncing":"#f1c40f", "synced":"#4ade80", "offline":"#f87171", "":"#60608a" }[syncStatus] || "#60608a";
+      // ── Library (bookcase) ────────────────────────────────────────────────────
+      const syncDot = { "syncing":"#d9b64e", "synced":"#7fc98d", "offline":"#e07a6a", "":"#6b7d6f" }[syncStatus] || "#6b7d6f";
+      const q = searchQ.toLowerCase();
+      const matches = b => !q || (b.title||"").toLowerCase().includes(q) || (b.author||"").toLowerCase().includes(q);
+      const reading  = books.filter(b => b.status === "Reading"  && matches(b));
+      const unread   = books.filter(b => b.status === "Unread"   && matches(b));
+      const finished = books.filter(b => b.status === "Finished" && matches(b));
+
       return (
-        <div style={{ minHeight:"100vh", background:"#0d0d1a", color:"#e2e0f0", fontFamily:"'Inter',system-ui,sans-serif", paddingBottom:80 }}>
+        <div style={{ minHeight:"100vh", color:"#efe6d2", fontFamily:"'Inter',system-ui,sans-serif", paddingBottom:80,
+          background:"radial-gradient(ellipse at 50% 0%, #1c3325 0%, #12211a 45%, #0b1410 100%)" }}>
+
           <div style={{ padding:"52px 20px 0", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-            <div style={{ fontSize:22, fontWeight:700, letterSpacing:"-0.5px" }}>my<span style={{ color:"#c084fc" }}>shelf</span></div>
+            <div style={{ fontSize:24, fontWeight:700, letterSpacing:"0.02em", fontFamily:"Georgia, serif" }}>
+              my<span style={{ color:"#d9c47e" }}>shelf</span>
+            </div>
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
               <button onClick={() => setView("sync")} title="Sync"
-                style={{ background:"#1e1e3a", border:"1px solid #2a2a50", borderRadius:12, padding:"10px 12px", color:"#c084fc", fontWeight:600, fontSize:14, cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}>
+                style={{ background:"#1b3024", border:"1px solid #33513c", borderRadius:12, padding:"10px 12px", color:"#d9c47e", fontWeight:600, fontSize:14, cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}>
                 <span style={{ width:8, height:8, borderRadius:99, background:syncDot, display:"inline-block" }}></span>
                 🔄
               </button>
-              <button onClick={startAdd} style={{ background:"linear-gradient(135deg,#7c3aed,#a855f7)", color:"#fff", border:"none", borderRadius:12, padding:"10px 18px", fontWeight:600, fontSize:14, cursor:"pointer" }}>+ Add Book</button>
+              <button onClick={startAdd}
+                style={{ background:"linear-gradient(135deg,#3d6b45,#2b5133)", color:"#f0e7cf", border:"1px solid #57804f", borderRadius:12, padding:"10px 18px", fontWeight:600, fontSize:14, cursor:"pointer" }}>+ Add Book</button>
             </div>
           </div>
+
           <input placeholder="Search by title or author…" value={searchQ} onChange={e => setSearchQ(e.target.value)}
             style={{ ...inp, margin:"16px 20px 0", width:"calc(100% - 40px)" }} />
-          <div style={{ display:"flex", gap:8, padding:"12px 20px 0", overflowX:"auto" }}>
-            {statuses.map(st => (
-              <button key={st} onClick={() => setFilter(st)}
-                style={{ background:filter===st?"#7c3aed":"#16162a", color:filter===st?"#fff":"#9090b0",
-                  border:`1px solid ${filter===st?"#7c3aed":"#2a2a45"}`, borderRadius:99,
-                  padding:"6px 14px", fontSize:12, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap" }}>
-                {st}{counts[st]>0?` (${counts[st]})`:""}
-              </button>))}
+
+          {/* spine / cover toggle */}
+          <div style={{ display:"flex", justifyContent:"center", gap:0, margin:"14px 20px 20px" }}>
+            {[["spine","Spines"],["cover","Covers"]].map(([m,label]) => (
+              <button key={m} onClick={() => { setShelfMode(m); localStorage.setItem("myshelf_mode", m); }}
+                style={{
+                  background: shelfMode===m ? "linear-gradient(180deg,#4a3a1c,#2e2412)" : "#16261c",
+                  color: shelfMode===m ? "#e0c983" : "#7f9285",
+                  border:"1px solid #4a3a1c",
+                  borderRadius: m==="spine" ? "8px 0 0 8px" : "0 8px 8px 0",
+                  padding:"7px 22px", fontSize:12, fontWeight:700, letterSpacing:"0.08em",
+                  textTransform:"uppercase", cursor:"pointer", fontFamily:"Georgia, serif",
+                }}>{label}</button>
+            ))}
           </div>
-          {filtered.length === 0
-            ? <div style={{ textAlign:"center", padding:"80px 40px" }}>
+
+          <div style={{ padding:"0 16px" }}>
+            {books.length === 0 ? (
+              <div style={{ textAlign:"center", padding:"70px 40px" }}>
                 <div style={{ fontSize:56, marginBottom:16 }}>📚</div>
-                <div style={{ fontSize:18, fontWeight:700, marginBottom:8 }}>{books.length===0?"Your shelf is empty":"No books match"}</div>
-                <div style={{ fontSize:14, color:"#60608a" }}>{books.length===0?"Tap + Add Book and scan a barcode":"Try a different filter or search"}</div>
+                <div style={{ fontSize:18, fontWeight:700, marginBottom:8, fontFamily:"Georgia, serif" }}>Your bookcase is empty</div>
+                <div style={{ fontSize:14, color:"#7f9285" }}>Tap + Add Book and scan a barcode</div>
               </div>
-            : <div style={{
-                display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",
-                gap:0, columnGap:16, padding:20,
-                background:"linear-gradient(#0d0d1a,#0d0d1a)"
-              }}>
-                {filtered.map(book => (
-                  <div key={book.id} style={{ paddingBottom:18, marginBottom:14,
-                    borderBottom:"10px solid transparent",
-                    borderImage:"linear-gradient(90deg,#3a2418,#6b4423,#3a2418) 1",
-                    borderImageSlice:1 }}>
-                  <div onClick={() => openDetail(book)}
-                    style={{ background:"#13132a", border:"1px solid #1e1e3a", borderRadius:"6px 8px 8px 6px",
-                      overflow:"hidden", cursor:"pointer", boxShadow:"3px 4px 10px rgba(0,0,0,0.5)",
-                      borderLeft:"4px solid rgba(192,132,252,0.35)" }}>
-                    {book.cover
-                      ? <img src={book.cover} alt={book.title} style={{ width:"100%", aspectRatio:"2/3", objectFit:"cover" }} />
-                      : <div style={{ width:"100%", aspectRatio:"2/3", background:"linear-gradient(135deg,#1a1a35,#2a1a4a)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:48, opacity:0.5 }}>📚</div>}
-                    <div style={{ padding:"10px 12px 14px" }}>
-                      <div style={{ fontSize:13, fontWeight:700, lineHeight:1.3, marginBottom:4 }}>{book.title||"Untitled"}</div>
-                      <div style={{ fontSize:11, color:"#7070a0", marginBottom:8 }}>{book.author||"Unknown"}</div>
-                      <StatusBadge status={book.status} />
-                      {book.rating>0 && <div style={{ marginTop:6 }}><StarRating value={book.rating} /></div>}
-                    </div>
-                  </div>
-                  </div>))}
-              </div>}
+            ) : (
+              <div>
+                <Shelf label="Currently Reading" books={reading}  mode={shelfMode} onOpen={openDetail} ornament="🕯️" />
+                <Shelf label="To Read"           books={unread}   mode={shelfMode} onOpen={openDetail} ornament="🪴" />
+                <Shelf label="Finished"          books={finished} mode={shelfMode} onOpen={openDetail} ornament="🦉" />
+              </div>
+            )}
+          </div>
         </div>
       );
     }

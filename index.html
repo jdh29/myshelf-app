@@ -116,7 +116,7 @@
       const widthBase = pages && !isNaN(pages)
         ? Math.max(26, Math.min(56, Math.round(pages / 12)))
         : 34 + (h % 18);
-      return { w: widthBase, hPct: 82 + (h % 17) }; // height 82–98% of shelf
+      return { w: widthBase, hPct: 88 + (h % 12) }; // height 88–99% of shelf
     }
 
     function Spine({ book, onClick }) {
@@ -164,7 +164,62 @@
     }
 
     // A wooden shelf holding a row of books (spines or covers).
+    // One wooden shelf board with a row of books resting on it.
+    function ShelfRow({ books, mode, onOpen, ornament, rowHeight }) {
+      return (
+        <div>
+          {mode === "spine" ? (
+            <div style={{ display:"flex", alignItems:"flex-end", gap:3, height:rowHeight }}>
+              {books.map(b => <Spine key={b.id} book={b} onClick={() => onOpen(b)} />)}
+              {ornament && <div style={{ fontSize:32, alignSelf:"flex-end", marginLeft:10, opacity:0.85, flexShrink:0 }}>{ornament}</div>}
+            </div>
+          ) : (
+            <div style={{ display:"flex", alignItems:"flex-end", gap:12, flexWrap:"nowrap" }}>
+              {books.map(b => (
+                <div key={b.id} onClick={() => onOpen(b)} style={{ width:92, flexShrink:0, cursor:"pointer" }}>
+                  {b.cover
+                    ? <img src={b.cover} alt={b.title}
+                        style={{ width:"100%", aspectRatio:"2/3", objectFit:"cover", borderRadius:3,
+                          boxShadow:"2px 4px 9px rgba(0,0,0,0.6)" }} />
+                    : <div style={{ width:"100%", aspectRatio:"2/3", borderRadius:3,
+                        background:"linear-gradient(135deg,#22331f,#16251a)", display:"flex",
+                        alignItems:"center", justifyContent:"center", fontSize:30, opacity:0.6,
+                        boxShadow:"2px 4px 9px rgba(0,0,0,0.6)" }}>📗</div>}
+                  <div style={{ fontSize:11, color:"#c9bb95", marginTop:5, lineHeight:1.25,
+                    overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{b.title}</div>
+                </div>
+              ))}
+              {ornament && <div style={{ fontSize:32, alignSelf:"flex-end", marginLeft:6, opacity:0.85, flexShrink:0 }}>{ornament}</div>}
+            </div>
+          )}
+          {/* the wooden shelf board */}
+          <div style={{ height:14, marginTop:4, marginBottom:18,
+            background:"linear-gradient(180deg,#7a4f2a 0%,#5e3b20 55%,#3d2614 100%)",
+            borderRadius:"2px 2px 4px 4px",
+            boxShadow:"0 4px 8px rgba(0,0,0,0.6), inset 0 1px 0 rgba(190,140,80,0.5)" }} />
+        </div>
+      );
+    }
+
+    // A labelled section that wraps its books onto as many shelf rows as needed.
     function Shelf({ label, books, mode, onOpen, ornament }) {
+      const ROW_H = mode === "spine" ? 200 : 175;
+      // Rough per-item widths so we can split the list into rows that fit.
+      const [perRow, setPerRow] = useState(10);
+      useEffect(() => {
+        const calc = () => {
+          const avail = Math.min(window.innerWidth, 1400) - 60;
+          const itemW = mode === "spine" ? 46 : 104;
+          setPerRow(Math.max(3, Math.floor(avail / itemW)));
+        };
+        calc();
+        window.addEventListener("resize", calc);
+        return () => window.removeEventListener("resize", calc);
+      }, [mode]);
+
+      const rows = [];
+      for (let i = 0; i < books.length; i += perRow) rows.push(books.slice(i, i + perRow));
+
       return (
         <div style={{ marginBottom: 26 }}>
           {/* brass label plate */}
@@ -181,43 +236,22 @@
             background:"linear-gradient(180deg, rgba(10,20,14,0.55), rgba(6,12,9,0.75))",
             border:"1px solid #2a3f2f", borderTop:"none",
             borderRadius:"0 0 6px 6px", padding:"14px 12px 0",
-            minHeight: mode === "spine" ? 150 : 120,
           }}>
             {books.length === 0 ? (
-              <div style={{ color:"#5d7263", fontSize:13, textAlign:"center", padding:"28px 0 34px", fontStyle:"italic" }}>
-                Empty shelf
+              <div>
+                <div style={{ color:"#5d7263", fontSize:13, textAlign:"center", padding:"22px 0 26px", fontStyle:"italic" }}>
+                  Empty shelf
+                </div>
+                <div style={{ height:14, marginTop:4, marginBottom:4,
+                  background:"linear-gradient(180deg,#7a4f2a 0%,#5e3b20 55%,#3d2614 100%)",
+                  borderRadius:"2px 2px 4px 4px",
+                  boxShadow:"0 4px 8px rgba(0,0,0,0.6), inset 0 1px 0 rgba(190,140,80,0.5)" }} />
               </div>
-            ) : mode === "spine" ? (
-              <div style={{ display:"flex", alignItems:"flex-end", gap:3, height:150,
-                overflowX:"auto", paddingBottom:0 }}>
-                {books.map(b => <Spine key={b.id} book={b} onClick={() => onOpen(b)} />)}
-                {ornament && <div style={{ fontSize:34, alignSelf:"flex-end", marginLeft:8, opacity:0.85, flexShrink:0 }}>{ornament}</div>}
-              </div>
-            ) : (
-              <div style={{ display:"flex", alignItems:"flex-end", gap:12, overflowX:"auto", paddingBottom:6 }}>
-                {books.map(b => (
-                  <div key={b.id} onClick={() => onOpen(b)}
-                    style={{ width:92, flexShrink:0, cursor:"pointer" }}>
-                    {b.cover
-                      ? <img src={b.cover} alt={b.title}
-                          style={{ width:"100%", aspectRatio:"2/3", objectFit:"cover", borderRadius:3,
-                            boxShadow:"2px 4px 9px rgba(0,0,0,0.6)" }} />
-                      : <div style={{ width:"100%", aspectRatio:"2/3", borderRadius:3,
-                          background:"linear-gradient(135deg,#22331f,#16251a)", display:"flex",
-                          alignItems:"center", justifyContent:"center", fontSize:30, opacity:0.6,
-                          boxShadow:"2px 4px 9px rgba(0,0,0,0.6)" }}>📗</div>}
-                    <div style={{ fontSize:11, color:"#c9bb95", marginTop:5, lineHeight:1.25,
-                      overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{b.title}</div>
-                  </div>
-                ))}
-                {ornament && <div style={{ fontSize:34, alignSelf:"flex-end", marginLeft:4, opacity:0.85, flexShrink:0 }}>{ornament}</div>}
-              </div>
-            )}
-            {/* the wooden shelf board */}
-            <div style={{ height:14, marginTop:4,
-              background:"linear-gradient(180deg,#7a4f2a 0%,#5e3b20 55%,#3d2614 100%)",
-              borderRadius:"2px 2px 4px 4px",
-              boxShadow:"0 4px 8px rgba(0,0,0,0.6), inset 0 1px 0 rgba(190,140,80,0.5)" }} />
+            ) : rows.map((row, i) => (
+              <ShelfRow key={i} books={row} mode={mode} onOpen={onOpen}
+                rowHeight={ROW_H}
+                ornament={i === rows.length - 1 ? ornament : null} />
+            ))}
           </div>
         </div>
       );
@@ -642,9 +676,19 @@
       const syncDot = { "syncing":"#d9b64e", "synced":"#7fc98d", "offline":"#e07a6a", "":"#6b7d6f" }[syncStatus] || "#6b7d6f";
       const q = searchQ.toLowerCase();
       const matches = b => !q || (b.title||"").toLowerCase().includes(q) || (b.author||"").toLowerCase().includes(q);
-      const reading  = books.filter(b => b.status === "Reading"  && matches(b));
-      const unread   = books.filter(b => b.status === "Unread"   && matches(b));
-      const finished = books.filter(b => b.status === "Finished" && matches(b));
+      // Sort by author surname, then title.
+      const surname = (a) => {
+        const parts = (a || "").trim().split(/\s+/);
+        return (parts.length > 1 ? parts[parts.length - 1] : (a || "")).toLowerCase();
+      };
+      const byAuthor = (x, y) => {
+        const s = surname(x.author).localeCompare(surname(y.author));
+        if (s !== 0) return s;
+        return (x.title || "").localeCompare(y.title || "");
+      };
+      const reading  = books.filter(b => b.status === "Reading"  && matches(b)).sort(byAuthor);
+      const unread   = books.filter(b => b.status === "Unread"   && matches(b)).sort(byAuthor);
+      const finished = books.filter(b => b.status === "Finished" && matches(b)).sort(byAuthor);
 
       return (
         <div style={{ minHeight:"100vh", color:"#efe6d2", fontFamily:"'Inter',system-ui,sans-serif", paddingBottom:80,

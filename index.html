@@ -332,8 +332,13 @@
         }
       };
 
-      // The guide frame, as a fraction of the visible box.
-      const GUIDE = { wf: 0.20, hf: 0.78 };
+      // The guide frame, as a fraction of the visible box. Width is adjustable
+      // so it can fit anything from a slim paperback to a thick hardback.
+      const [guideW, setGuideW] = useState(() => {
+        const saved = parseFloat(localStorage.getItem("myshelf_guidew"));
+        return (saved >= 0.10 && saved <= 0.60) ? saved : 0.30;
+      });
+      const GUIDE = { wf: guideW, hf: 0.78 };
 
       const captureFromVideo = () => {
         const v = videoRef.current, box = boxRef.current;
@@ -477,9 +482,21 @@
                   }} />
                 </div>
               </div>
-              <div style={{ padding:"16px 20px 30px", textAlign:"center" }}>
-                <div style={{ fontSize:13, color:"#a8b5a5", marginBottom:12 }}>
+              <div style={{ padding:"14px 20px 30px", textAlign:"center" }}>
+                <div style={{ fontSize:13, color:"#a8b5a5", marginBottom:10 }}>
                   Fill the frame with the spine, hold steady
+                </div>
+                <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:14 }}>
+                  <span style={{ fontSize:11, color:"#7f9285", letterSpacing:"0.06em" }}>THIN</span>
+                  <input type="range" min="10" max="60" step="1"
+                    value={Math.round(guideW * 100)}
+                    onChange={e => {
+                      const v = parseInt(e.target.value, 10) / 100;
+                      setGuideW(v);
+                      localStorage.setItem("myshelf_guidew", String(v));
+                    }}
+                    style={{ flex:1, accentColor:"#d9c47e" }} />
+                  <span style={{ fontSize:11, color:"#7f9285", letterSpacing:"0.06em" }}>THICK</span>
                 </div>
                 <button onClick={captureFromVideo}
                   style={{ ...btn, background:"linear-gradient(135deg,#3d6b45,#2b5133)", border:"1px solid #57804f", color:"#f0e7cf", width:"100%", maxWidth:320 }}>

@@ -338,7 +338,11 @@
         const saved = parseFloat(localStorage.getItem("myshelf_guidew"));
         return (saved >= 0.10 && saved <= 0.60) ? saved : 0.30;
       });
-      const GUIDE = { wf: guideW, hf: 0.78 };
+      const [guideH, setGuideH] = useState(() => {
+        const saved = parseFloat(localStorage.getItem("myshelf_guideh"));
+        return (saved >= 0.25 && saved <= 0.92) ? saved : 0.78;
+      });
+      const GUIDE = { wf: guideW, hf: guideH };
 
       const captureFromVideo = () => {
         const v = videoRef.current, box = boxRef.current;
@@ -484,10 +488,10 @@
               </div>
               <div style={{ padding:"14px 20px 30px", textAlign:"center" }}>
                 <div style={{ fontSize:13, color:"#a8b5a5", marginBottom:10 }}>
-                  Fill the frame with the spine, hold steady
+                  Match the frame to the spine, then capture
                 </div>
-                <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:14 }}>
-                  <span style={{ fontSize:11, color:"#7f9285", letterSpacing:"0.06em" }}>THIN</span>
+                <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
+                  <span style={{ fontSize:10, color:"#7f9285", letterSpacing:"0.06em", width:44, textAlign:"right" }}>WIDTH</span>
                   <input type="range" min="10" max="60" step="1"
                     value={Math.round(guideW * 100)}
                     onChange={e => {
@@ -496,7 +500,17 @@
                       localStorage.setItem("myshelf_guidew", String(v));
                     }}
                     style={{ flex:1, accentColor:"#d9c47e" }} />
-                  <span style={{ fontSize:11, color:"#7f9285", letterSpacing:"0.06em" }}>THICK</span>
+                </div>
+                <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14 }}>
+                  <span style={{ fontSize:10, color:"#7f9285", letterSpacing:"0.06em", width:44, textAlign:"right" }}>HEIGHT</span>
+                  <input type="range" min="25" max="92" step="1"
+                    value={Math.round(guideH * 100)}
+                    onChange={e => {
+                      const v = parseInt(e.target.value, 10) / 100;
+                      setGuideH(v);
+                      localStorage.setItem("myshelf_guideh", String(v));
+                    }}
+                    style={{ flex:1, accentColor:"#d9c47e" }} />
                 </div>
                 <button onClick={captureFromVideo}
                   style={{ ...btn, background:"linear-gradient(135deg,#3d6b45,#2b5133)", border:"1px solid #57804f", color:"#f0e7cf", width:"100%", maxWidth:320 }}>

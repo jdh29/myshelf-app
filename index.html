@@ -293,18 +293,17 @@
       );
     }
 
-    // ── Spine capture: guided camera frame, or crop an existing photo ─────────
+    // ── Spine capture: take a photo (or pick one), then crop it ───────────────
     function SpineCapture({ onDone, onCancel }) {
       const [stage, setStage] = useState("choose");   // choose | camera | crop
       const [imgSrc, setImgSrc] = useState(null);
       const [err, setErr] = useState("");
       const videoRef = useRef(null);
       const streamRef = useRef(null);
-      const boxRef = useRef(null);          // the visible camera/crop area
+      const boxRef = useRef(null);
       const fileRef = useRef(null);
       const imgRef = useRef(null);
-      // crop box in container coordinates
-      const [crop, setCrop] = useState({ x: 0, y: 0, w: 0, h: 0 });
+      const [crop, setCrop] = useState({ x:0, y:0, w:0, h:0 });
       const drag = useRef(null);
 
       const stopCam = () => {
@@ -319,7 +318,7 @@
         setErr(""); setStage("camera");
         try {
           const s = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { ideal: "environment" }, width:{ideal:1920}, height:{ideal:1080} },
+            video: { facingMode:{ ideal:"environment" }, width:{ideal:1920}, height:{ideal:1080} },
             audio: false,
           });
           streamRef.current = s;
@@ -332,42 +331,16 @@
         }
       };
 
-      // The guide frame, as a fraction of the visible box. Width is adjustable
-      // so it can fit anything from a slim paperback to a thick hardback.
-      const [guideW, setGuideW] = useState(() => {
-        const saved = parseFloat(localStorage.getItem("myshelf_guidew"));
-        return (saved >= 0.10 && saved <= 0.60) ? saved : 0.30;
-      });
-      const [guideH, setGuideH] = useState(() => {
-        const saved = parseFloat(localStorage.getItem("myshelf_guideh"));
-        return (saved >= 0.25 && saved <= 0.92) ? saved : 0.78;
-      });
-      const GUIDE = { wf: guideW, hf: guideH };
-      const CTRL_H = 168;   // height reserved for the overlaid controls
-
-      const captureFromVideo = () => {
-        const v = videoRef.current, box = boxRef.current;
-        if (!v || !box || !v.videoWidth) return;
-        const dispW = box.clientWidth, dispH = box.clientHeight;
-        const vw = v.videoWidth, vh = v.videoHeight;
-        // video is rendered with object-fit: cover
-        const scale = Math.max(dispW / vw, dispH / vh);
-        const offX = (dispW - vw * scale) / 2;
-        const offY = (dispH - vh * scale) / 2;
-        // guide rect in container coords (centred in the area above the controls)
-        const visH = Math.max(80, dispH - CTRL_H);
-        const gw = dispW * GUIDE.wf, gh = visH * GUIDE.hf;
-        const gx = (dispW - gw) / 2, gy = (visH - gh) / 2;
-        // map back to source pixels
-        const sx = (gx - offX) / scale, sy = (gy - offY) / scale;
-        const sw = gw / scale, sh = gh / scale;
-        const out = document.createElement("canvas");
-        const targetH = 900;
-        out.height = targetH;
-        out.width = Math.max(40, Math.round(targetH * (sw / sh)));
-        out.getContext("2d").drawImage(v, sx, sy, sw, sh, 0, 0, out.width, out.height);
+      // Take the full frame, then hand it to the cropper.
+      const takePhoto = () => {
+        const v = videoRef.current;
+        if (!v || !v.videoWidth) return;
+        const cv = document.createElement("canvas");
+        cv.width = v.videoWidth; cv.height = v.videoHeight;
+        cv.getContext("2d").drawImage(v, 0, 0);
         stopCam();
-        onDone(out.toDataURL("image/jpeg", 0.88));
+        setImgSrc(cv.toDataURL("image/jpeg", 0.92));
+        setStage("crop");
       };
 
       const pickFile = (file) => {
@@ -377,14 +350,14 @@
         r.readAsDataURL(file);
       };
 
-      // Once the image is laid out, seed a sensible spine-shaped crop box.
+      // Seed a tall spine-shaped crop box once the photo is laid out.
       const onImgLoad = () => {
         const box = boxRef.current;
         if (!box) return;
         const W = box.clientWidth, H = box.clientHeight;
-        const w = Math.min(W * 0.26, H * 0.20);
-        const h = Math.min(H * 0.80, w * 6.5);
-        setCrop({ x: (W - w) / 2, y: (H - h) / 2, w, h });
+        const h = H * 0.72;
+        const w = Math.min(W * 0.34, h * 0.22);
+        setCrop({ x:(W-w)/2, y:(H-h)/2, w, h });
       };
 
       const pt = (e) => {
@@ -393,24 +366,33 @@
         return { x: t.clientX - r.left, y: t.clientY - r.top };
       };
       const startDrag = (mode) => (e) => {
-        e.preventDefault();
+        e.preventDefault(); e.stopPropagation();
         drag.current = { mode, start: pt(e), orig: { ...crop } };
       };
       const onMove = (e) => {
         if (!drag.current) return;
         e.preventDefault();
-        const p = pt(e), d = drag.current;
+        const p = pt(e), d = drag.current, o = d.orig;
         const W = boxRef.current.clientWidth, H = boxRef.current.clientHeight;
         const dx = p.x - d.start.x, dy = p.y - d.start.y;
+        const MIN_W = 24, MIN_H = 60;
+        let n = { ...o };
         if (d.mode === "move") {
-          setCrop(c => ({ ...c,
-            x: Math.max(0, Math.min(W - c.w, d.orig.x + dx)),
-            y: Math.max(0, Math.min(H - c.h, d.orig.y + dy)) }));
+          n.x = Math.max(0, Math.min(W - o.w, o.x + dx));
+          n.y = Math.max(0, Math.min(H - o.h, o.y + dy));
         } else {
-          setCrop(c => ({ ...c,
-            w: Math.max(24, Math.min(W - c.x, d.orig.w + dx)),
-            h: Math.max(60, Math.min(H - c.y, d.orig.h + dy)) }));
+          if (d.mode.includes("e")) n.w = Math.max(MIN_W, Math.min(W - o.x, o.w + dx));
+          if (d.mode.includes("s")) n.h = Math.max(MIN_H, Math.min(H - o.y, o.h + dy));
+          if (d.mode.includes("w")) {
+            const nx = Math.max(0, Math.min(o.x + o.w - MIN_W, o.x + dx));
+            n.w = o.w + (o.x - nx); n.x = nx;
+          }
+          if (d.mode.includes("n")) {
+            const ny = Math.max(0, Math.min(o.y + o.h - MIN_H, o.y + dy));
+            n.h = o.h + (o.y - ny); n.y = ny;
+          }
         }
+        setCrop(n);
       };
       const endDrag = () => { drag.current = null; };
 
@@ -419,30 +401,35 @@
         if (!im || !box) return;
         const dispW = box.clientWidth, dispH = box.clientHeight;
         const iw = im.naturalWidth, ih = im.naturalHeight;
-        // image is rendered with object-fit: contain
-        const scale = Math.min(dispW / iw, dispH / ih);
-        const offX = (dispW - iw * scale) / 2;
-        const offY = (dispH - ih * scale) / 2;
-        const sx = Math.max(0, (crop.x - offX) / scale);
-        const sy = Math.max(0, (crop.y - offY) / scale);
-        const sw = Math.min(iw - sx, crop.w / scale);
-        const sh = Math.min(ih - sy, crop.h / scale);
+        const scale = Math.min(dispW/iw, dispH/ih);     // object-fit: contain
+        const offX = (dispW - iw*scale)/2, offY = (dispH - ih*scale)/2;
+        const sx = Math.max(0, (crop.x - offX)/scale);
+        const sy = Math.max(0, (crop.y - offY)/scale);
+        const sw = Math.max(1, Math.min(iw - sx, crop.w/scale));
+        const sh = Math.max(1, Math.min(ih - sy, crop.h/scale));
         const out = document.createElement("canvas");
         const targetH = 900;
         out.height = targetH;
-        out.width = Math.max(40, Math.round(targetH * (sw / sh)));
+        out.width = Math.max(30, Math.round(targetH * (sw/sh)));
         out.getContext("2d").drawImage(im, sx, sy, sw, sh, 0, 0, out.width, out.height);
         onDone(out.toDataURL("image/jpeg", 0.88));
       };
 
       const btn = { padding:"12px 18px", borderRadius:12, fontWeight:700, fontSize:15, cursor:"pointer" };
+      const HANDLE = 30;
+      const handleStyle = (pos) => ({
+        position:"absolute", width:HANDLE, height:HANDLE, borderRadius:"50%",
+        background:"#d9c47e", border:"2px solid #7a5f22", touchAction:"none",
+        ...pos,
+      });
 
       return (
         <div style={{ position:"fixed", left:0, right:0, top:0, bottom:0,
           height:"100dvh", background:"#07100c", zIndex:200,
           display:"flex", flexDirection:"column", color:"#efe6d2",
           fontFamily:"'Inter',system-ui,sans-serif" }}>
-          <div style={{ padding:"52px 20px 14px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div style={{ flexShrink:0, padding:"52px 20px 14px", display:"flex",
+            alignItems:"center", justifyContent:"space-between" }}>
             <span style={{ fontSize:17, fontWeight:700, fontFamily:"Georgia, serif" }}>
               {stage === "crop" ? "Crop the spine" : "Scan a spine"}
             </span>
@@ -455,15 +442,15 @@
           {err && <div style={{ color:"#e07a6a", fontSize:13, textAlign:"center", padding:"0 20px 10px" }}>{err}</div>}
 
           {stage === "choose" && (
-            <div style={{ flex:1, display:"flex", flexDirection:"column", justifyContent:"center",
-              alignItems:"center", gap:14, padding:"0 30px" }}>
+            <div style={{ flex:1, minHeight:0, display:"flex", flexDirection:"column",
+              justifyContent:"center", alignItems:"center", gap:14, padding:"0 30px" }}>
               <div style={{ fontSize:52 }}>📖</div>
               <p style={{ fontSize:14, color:"#a8b5a5", textAlign:"center", lineHeight:1.6, maxWidth:340 }}>
-                Line the book's spine up inside the frame, or pick a photo you've already taken and crop it.
+                Take a photo of the book's spine, or pick one you've already taken. You'll crop it on the next screen.
               </p>
               <button onClick={startCam}
                 style={{ ...btn, background:"linear-gradient(135deg,#3d6b45,#2b5133)", border:"1px solid #57804f", color:"#f0e7cf", width:"100%", maxWidth:320 }}>
-                📷 Use Camera
+                📷 Take Photo
               </button>
               <button onClick={() => fileRef.current.click()}
                 style={{ ...btn, background:"#1b3024", border:"1px solid #33513c", color:"#d9c47e", width:"100%", maxWidth:320 }}>
@@ -475,85 +462,68 @@
           )}
 
           {stage === "camera" && (
-            <div style={{ flex:1, minHeight:0, display:"flex", flexDirection:"column" }}>
-              <div ref={boxRef} style={{ flex:1, minHeight:0, position:"relative", overflow:"hidden", background:"#000" }}>
-                <video ref={videoRef} playsInline muted
-                  style={{ width:"100%", height:"100%", objectFit:"cover" }} />
-                {/* dimmed surround + bright guide frame */}
-                <div style={{ position:"absolute", left:0, right:0, top:0, bottom:CTRL_H,
-                  pointerEvents:"none",
-                  display:"flex", alignItems:"center", justifyContent:"center" }}>
-                  <div style={{
-                    width:`${GUIDE.wf*100}%`, height:`${GUIDE.hf*100}%`,
-                    border:"3px solid #d9c47e", borderRadius:4,
-                    boxShadow:"0 0 0 9999px rgba(0,0,0,0.55)",
-                  }} />
+            <div style={{ flex:1, minHeight:0, position:"relative", overflow:"hidden", background:"#000" }}>
+              <video ref={videoRef} playsInline muted
+                style={{ width:"100%", height:"100%", objectFit:"cover" }} />
+              <div style={{ position:"absolute", left:0, right:0, bottom:0,
+                padding:"14px 18px calc(20px + env(safe-area-inset-bottom))",
+                background:"linear-gradient(180deg, rgba(7,16,12,0), rgba(7,16,12,0.9) 40%)",
+                textAlign:"center" }}>
+                <div style={{ fontSize:12, color:"#c9d4c6", marginBottom:10 }}>
+                  Get the whole spine in shot — you'll crop it next
                 </div>
-                {/* controls overlaid on the camera so they're always reachable */}
-                <div style={{ position:"absolute", left:0, right:0, bottom:0,
-                  padding:"12px 18px calc(18px + env(safe-area-inset-bottom))",
-                  background:"linear-gradient(180deg, rgba(7,16,12,0), rgba(7,16,12,0.88) 28%)",
-                  textAlign:"center" }}>
-                <div style={{ fontSize:12, color:"#c9d4c6", marginBottom:8 }}>
-                  Match the frame to the spine, then capture
-                </div>
-                <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
-                  <span style={{ fontSize:10, color:"#b9c6b6", letterSpacing:"0.06em", width:44, textAlign:"right" }}>WIDTH</span>
-                  <input type="range" min="10" max="60" step="1"
-                    value={Math.round(guideW * 100)}
-                    onChange={e => {
-                      const v = parseInt(e.target.value, 10) / 100;
-                      setGuideW(v);
-                      localStorage.setItem("myshelf_guidew", String(v));
-                    }}
-                    style={{ flex:1, accentColor:"#d9c47e" }} />
-                </div>
-                <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14 }}>
-                  <span style={{ fontSize:10, color:"#b9c6b6", letterSpacing:"0.06em", width:44, textAlign:"right" }}>HEIGHT</span>
-                  <input type="range" min="25" max="92" step="1"
-                    value={Math.round(guideH * 100)}
-                    onChange={e => {
-                      const v = parseInt(e.target.value, 10) / 100;
-                      setGuideH(v);
-                      localStorage.setItem("myshelf_guideh", String(v));
-                    }}
-                    style={{ flex:1, accentColor:"#d9c47e" }} />
-                </div>
-                <button onClick={captureFromVideo}
+                <button onClick={takePhoto}
                   style={{ ...btn, background:"linear-gradient(135deg,#3d6b45,#2b5133)", border:"1px solid #57804f", color:"#f0e7cf", width:"100%", maxWidth:320 }}>
-                  Capture Spine
+                  Take Photo
                 </button>
-                </div>
               </div>
             </div>
           )}
 
           {stage === "crop" && (
-            <div style={{ flex:1, display:"flex", flexDirection:"column" }}>
+            <div style={{ flex:1, minHeight:0, position:"relative", overflow:"hidden", background:"#000" }}>
               <div ref={boxRef}
                 onMouseMove={onMove} onMouseUp={endDrag} onMouseLeave={endDrag}
                 onTouchMove={onMove} onTouchEnd={endDrag}
-                style={{ flex:1, position:"relative", overflow:"hidden", background:"#000", touchAction:"none" }}>
+                style={{ position:"absolute", inset:0, touchAction:"none" }}>
                 <img ref={imgRef} src={imgSrc} alt="" onLoad={onImgLoad}
                   style={{ width:"100%", height:"100%", objectFit:"contain" }} />
                 <div onMouseDown={startDrag("move")} onTouchStart={startDrag("move")}
                   style={{ position:"absolute", left:crop.x, top:crop.y, width:crop.w, height:crop.h,
-                    border:"3px solid #d9c47e", borderRadius:3,
-                    boxShadow:"0 0 0 9999px rgba(0,0,0,0.55)", cursor:"move", touchAction:"none" }}>
-                  <div onMouseDown={startDrag("size")} onTouchStart={startDrag("size")}
-                    style={{ position:"absolute", right:-16, bottom:-16, width:34, height:34,
-                      borderRadius:"50%", background:"#d9c47e", border:"2px solid #7a5f22",
-                      cursor:"nwse-resize", touchAction:"none" }} />
+                    border:"2px solid #d9c47e", boxShadow:"0 0 0 9999px rgba(0,0,0,0.6)",
+                    cursor:"move", touchAction:"none" }}>
+                  {/* thirds guides */}
+                  <div style={{ position:"absolute", inset:0, pointerEvents:"none" }}>
+                    <div style={{ position:"absolute", left:0, right:0, top:"33.3%", height:1, background:"rgba(217,196,126,0.35)" }} />
+                    <div style={{ position:"absolute", left:0, right:0, top:"66.6%", height:1, background:"rgba(217,196,126,0.35)" }} />
+                  </div>
+                  <div onMouseDown={startDrag("nw")} onTouchStart={startDrag("nw")}
+                    style={handleStyle({ left:-HANDLE/2, top:-HANDLE/2, cursor:"nwse-resize" })} />
+                  <div onMouseDown={startDrag("ne")} onTouchStart={startDrag("ne")}
+                    style={handleStyle({ right:-HANDLE/2, top:-HANDLE/2, cursor:"nesw-resize" })} />
+                  <div onMouseDown={startDrag("sw")} onTouchStart={startDrag("sw")}
+                    style={handleStyle({ left:-HANDLE/2, bottom:-HANDLE/2, cursor:"nesw-resize" })} />
+                  <div onMouseDown={startDrag("se")} onTouchStart={startDrag("se")}
+                    style={handleStyle({ right:-HANDLE/2, bottom:-HANDLE/2, cursor:"nwse-resize" })} />
                 </div>
               </div>
-              <div style={{ padding:"16px 20px 30px", textAlign:"center" }}>
-                <div style={{ fontSize:13, color:"#a8b5a5", marginBottom:12 }}>
-                  Drag to move · drag the gold circle to resize
+              <div style={{ position:"absolute", left:0, right:0, bottom:0,
+                padding:"14px 18px calc(20px + env(safe-area-inset-bottom))",
+                background:"linear-gradient(180deg, rgba(7,16,12,0), rgba(7,16,12,0.9) 40%)",
+                textAlign:"center", pointerEvents:"none" }}>
+                <div style={{ fontSize:12, color:"#c9d4c6", marginBottom:10 }}>
+                  Drag the box to move · drag a corner to resize
                 </div>
-                <button onClick={confirmCrop}
-                  style={{ ...btn, background:"linear-gradient(135deg,#3d6b45,#2b5133)", border:"1px solid #57804f", color:"#f0e7cf", width:"100%", maxWidth:320 }}>
-                  Use This Spine
-                </button>
+                <div style={{ display:"flex", gap:10, justifyContent:"center", pointerEvents:"auto" }}>
+                  <button onClick={() => { setImgSrc(null); setStage("choose"); }}
+                    style={{ ...btn, background:"#24382b", border:"1px solid #33513c", color:"#efe6d2", flex:"0 1 140px" }}>
+                    Retake
+                  </button>
+                  <button onClick={confirmCrop}
+                    style={{ ...btn, background:"linear-gradient(135deg,#3d6b45,#2b5133)", border:"1px solid #57804f", color:"#f0e7cf", flex:"1 1 180px", maxWidth:220 }}>
+                    Use This Spine
+                  </button>
+                </div>
               </div>
             </div>
           )}

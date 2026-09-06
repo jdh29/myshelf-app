@@ -293,33 +293,45 @@
       );
     }
 
-    // ── Spine capture: take a photo (or pick one), then crop it ───────────────
+    // ── Spine capture: photograph a spine, then pull its four corners square ──
     function SpineCapture({ onDone, onCancel }) {
       const [stage, setStage] = useState("choose");   // choose | crop
       const [imgSrc, setImgSrc] = useState(null);
+      const [busy, setBusy] = useState(false);
       const [err, setErr] = useState("");
-      const boxRef = useRef(null);
-      const camRef = useRef(null);     // native camera input
+      const boxRef  = useRef(null);
+      const camRef  = useRef(null);    // native camera input
       const fileRef = useRef(null);    // photo library input
-      const imgRef = useRef(null);
-      const [crop, setCrop] = useState({ x:0, y:0, w:0, h:0 });
+      const imgRef  = useRef(null);
+      // Four corners in display coordinates: top-left, top-right, bottom-right, bottom-left.
+      const [pts, setPts] = useState([]);
       const drag = useRef(null);
+
+      const HANDLE = 34;
+      const PAD = HANDLE / 2 + 4;      // keeps every handle fully inside the photo area
 
       const pickFile = (file) => {
         if (!file) return;
+        setErr("");
         const r = new FileReader();
         r.onload = (e) => { setImgSrc(e.target.result); setStage("crop"); };
         r.readAsDataURL(file);
       };
 
-      // Seed a tall spine-shaped crop box once the photo is laid out.
-      const onImgLoad = () => {
+      // Seed a tall spine-shaped quad, inset so no handle sits on an edge.
+      const resetPts = () => {
         const box = boxRef.current;
         if (!box) return;
         const W = box.clientWidth, H = box.clientHeight;
-        const h = H * 0.72;
-        const w = Math.min(W * 0.34, h * 0.22);
-        setCrop({ x:(W-w)/2, y:(H-h)/2, w, h });
+        const h = Math.max(140, H - PAD * 2 - H * 0.10);
+        const w = Math.max(70, Math.min(W * 0.32, h * 0.24));
+        const x0 = (W - w) / 2, y0 = (H - h) / 2;
+        setPts([
+          { x: x0,     y: y0     },
+          { x: x0 + w, y: y0     },
+          { x: x0 + w, y: y0 + h },
+          { x: x0,     y: y0 + h },
+        ]);
       };
 
       const pt = (e) => {
@@ -327,63 +339,120 @@
         const r = boxRef.current.getBoundingClientRect();
         return { x: t.clientX - r.left, y: t.clientY - r.top };
       };
-      const startDrag = (mode) => (e) => {
+
+      const startDrag = (idx) => (e) => {
         e.preventDefault(); e.stopPropagation();
-        drag.current = { mode, start: pt(e), orig: { ...crop } };
+        drag.current = { idx, start: pt(e), orig: pts.map(p => ({ ...p })) };
       };
+
       const onMove = (e) => {
-        if (!drag.current) return;
+        if (!drag.current || !boxRef.current) return;
         e.preventDefault();
-        const p = pt(e), d = drag.current, o = d.orig;
         const W = boxRef.current.clientWidth, H = boxRef.current.clientHeight;
+        const p = pt(e), d = drag.current;
         const dx = p.x - d.start.x, dy = p.y - d.start.y;
-        const MIN_W = 24, MIN_H = 60;
-        let n = { ...o };
-        if (d.mode === "move") {
-          n.x = Math.max(0, Math.min(W - o.w, o.x + dx));
-          n.y = Math.max(0, Math.min(H - o.h, o.y + dy));
+        if (d.idx === "move") {
+          const xs = d.orig.map(q => q.x), ys = d.orig.map(q => q.y);
+          const ox = Math.max(PAD - Math.min(...xs), Math.min(W - PAD - Math.max(...xs), dx));
+          const oy = Math.max(PAD - Math.min(...ys), Math.min(H - PAD - Math.max(...ys), dy));
+          setPts(d.orig.map(q => ({ x: q.x + ox, y: q.y + oy })));
         } else {
-          if (d.mode.includes("e")) n.w = Math.max(MIN_W, Math.min(W - o.x, o.w + dx));
-          if (d.mode.includes("s")) n.h = Math.max(MIN_H, Math.min(H - o.y, o.h + dy));
-          if (d.mode.includes("w")) {
-            const nx = Math.max(0, Math.min(o.x + o.w - MIN_W, o.x + dx));
-            n.w = o.w + (o.x - nx); n.x = nx;
-          }
-          if (d.mode.includes("n")) {
-            const ny = Math.max(0, Math.min(o.y + o.h - MIN_H, o.y + dy));
-            n.h = o.h + (o.y - ny); n.y = ny;
-          }
+          setPts(d.orig.map((q, i) => i === d.idx ? {
+            x: Math.max(PAD, Math.min(W - PAD, q.x + dx)),
+            y: Math.max(PAD, Math.min(H - PAD, q.y + dy)),
+          } : q));
         }
-        setCrop(n);
       };
       const endDrag = () => { drag.current = null; };
 
-      const confirmCrop = () => {
+      // Un-skew the quad into a straight rectangle (projective warp).
+      const warp = () => {
         const im = imgRef.current, box = boxRef.current;
-        if (!im || !box) return;
+        if (!im || !box || pts.length !== 4) return;
+
+        // display coords → natural image coords (the <img> uses object-fit: contain)
         const dispW = box.clientWidth, dispH = box.clientHeight;
         const iw = im.naturalWidth, ih = im.naturalHeight;
-        const scale = Math.min(dispW/iw, dispH/ih);     // object-fit: contain
-        const offX = (dispW - iw*scale)/2, offY = (dispH - ih*scale)/2;
-        const sx = Math.max(0, (crop.x - offX)/scale);
-        const sy = Math.max(0, (crop.y - offY)/scale);
-        const sw = Math.max(1, Math.min(iw - sx, crop.w/scale));
-        const sh = Math.max(1, Math.min(ih - sy, crop.h/scale));
+        const fit = Math.min(dispW / iw, dispH / ih);
+        const offX = (dispW - iw * fit) / 2, offY = (dispH - ih * fit) / 2;
+
+        // Work from a reduced copy so the pixel loop stays quick on a phone.
+        const MAXDIM = 1800;
+        const ws = Math.min(1, MAXDIM / Math.max(iw, ih));
+        const work = document.createElement("canvas");
+        work.width  = Math.max(1, Math.round(iw * ws));
+        work.height = Math.max(1, Math.round(ih * ws));
+        const wctx = work.getContext("2d");
+        wctx.drawImage(im, 0, 0, work.width, work.height);
+        const src = wctx.getImageData(0, 0, work.width, work.height);
+
+        const q = pts.map(p => ({
+          x: ((p.x - offX) / fit) * ws,
+          y: ((p.y - offY) / fit) * ws,
+        }));
+        const dist = (m, n) => Math.hypot(m.x - n.x, m.y - n.y);
+        const wAvg = (dist(q[0], q[1]) + dist(q[3], q[2])) / 2;
+        const hAvg = (dist(q[0], q[3]) + dist(q[1], q[2])) / 2;
+        const OUT_H = 900;
+        const OUT_W = Math.max(24, Math.min(700, Math.round(OUT_H * (wAvg / Math.max(1, hAvg)))));
+
+        // Projective map from the unit square onto the quad.
+        const p0 = q[0], p1 = q[1], p2 = q[2], p3 = q[3];
+        const dx1 = p1.x - p2.x, dx2 = p3.x - p2.x, sx = p0.x - p1.x + p2.x - p3.x;
+        const dy1 = p1.y - p2.y, dy2 = p3.y - p2.y, sy = p0.y - p1.y + p2.y - p3.y;
+        const den = dx1 * dy2 - dy1 * dx2;
+        let g = 0, hh = 0;
+        if (Math.abs(den) > 1e-9) {
+          g  = (sx * dy2 - sy * dx2) / den;
+          hh = (dx1 * sy - dy1 * sx) / den;
+        }
+        const ma = p1.x - p0.x + g * p1.x, mb = p3.x - p0.x + hh * p3.x, mc = p0.x;
+        const md = p1.y - p0.y + g * p1.y, me = p3.y - p0.y + hh * p3.y, mf = p0.y;
+
         const out = document.createElement("canvas");
-        const targetH = 900;
-        out.height = targetH;
-        out.width = Math.max(30, Math.round(targetH * (sw/sh)));
-        out.getContext("2d").drawImage(im, sx, sy, sw, sh, 0, 0, out.width, out.height);
+        out.width = OUT_W; out.height = OUT_H;
+        const octx = out.getContext("2d");
+        const dst = octx.createImageData(OUT_W, OUT_H);
+        const S = src.data, D = dst.data, sw = src.width, sh = src.height;
+
+        for (let yy = 0; yy < OUT_H; yy++) {
+          const v = (yy + 0.5) / OUT_H;
+          for (let xx = 0; xx < OUT_W; xx++) {
+            const u = (xx + 0.5) / OUT_W;
+            const den2 = g * u + hh * v + 1;
+            const fx = (ma * u + mb * v + mc) / den2;
+            const fy = (md * u + me * v + mf) / den2;
+            const o = (yy * OUT_W + xx) * 4;
+            D[o + 3] = 255;
+            if (fx < 0 || fy < 0 || fx > sw - 1 || fy > sh - 1) continue;
+            const x1 = fx | 0, y1 = fy | 0;
+            const x2 = x1 + 1 < sw ? x1 + 1 : x1;
+            const y2 = y1 + 1 < sh ? y1 + 1 : y1;
+            const tx = fx - x1, ty = fy - y1;
+            const i00 = (y1 * sw + x1) * 4, i10 = (y1 * sw + x2) * 4;
+            const i01 = (y2 * sw + x1) * 4, i11 = (y2 * sw + x2) * 4;
+            for (let k = 0; k < 3; k++) {
+              const t1 = S[i00 + k] + (S[i10 + k] - S[i00 + k]) * tx;
+              const t2 = S[i01 + k] + (S[i11 + k] - S[i01 + k]) * tx;
+              D[o + k] = t1 + (t2 - t1) * ty;
+            }
+          }
+        }
+        octx.putImageData(dst, 0, 0);
         onDone(out.toDataURL("image/jpeg", 0.88));
       };
 
+      const confirmCrop = () => {
+        setBusy(true);
+        // let the "Straightening…" overlay paint before the pixel loop blocks
+        setTimeout(() => {
+          try { warp(); }
+          catch (e) { setErr("Couldn't process that photo. Try taking it again."); setBusy(false); }
+        }, 40);
+      };
+
       const btn = { padding:"12px 18px", borderRadius:12, fontWeight:700, fontSize:15, cursor:"pointer" };
-      const HANDLE = 30;
-      const handleStyle = (pos) => ({
-        position:"absolute", width:HANDLE, height:HANDLE, borderRadius:"50%",
-        background:"#d9c47e", border:"2px solid #7a5f22", touchAction:"none",
-        ...pos,
-      });
+      const poly = pts.map(p => `${p.x},${p.y}`).join(" ");
 
       return (
         <div style={{ position:"fixed", left:0, right:0, top:0, bottom:0,
@@ -393,7 +462,7 @@
           <div style={{ flexShrink:0, padding:"52px 20px 14px", display:"flex",
             alignItems:"center", justifyContent:"space-between" }}>
             <span style={{ fontSize:17, fontWeight:700, fontFamily:"Georgia, serif" }}>
-              {stage === "crop" ? "Crop the spine" : "Scan a spine"}
+              {stage === "crop" ? "Square up the spine" : "Scan a spine"}
             </span>
             <button onClick={onCancel}
               style={{ ...btn, background:"#24382b", border:"1px solid #33513c", color:"#efe6d2", padding:"8px 16px", fontSize:14 }}>
@@ -408,7 +477,7 @@
               justifyContent:"center", alignItems:"center", gap:14, padding:"0 30px" }}>
               <div style={{ fontSize:52 }}>📖</div>
               <p style={{ fontSize:14, color:"#a8b5a5", textAlign:"center", lineHeight:1.6, maxWidth:340 }}>
-                Take a photo of the book's spine, or pick one from your library. You'll crop it on the next screen.
+                Take a photo of the book's spine, or pick one from your library. On the next screen you drag the four corners onto the corners of the spine and the app straightens it.
               </p>
               <button onClick={() => camRef.current.click()}
                 style={{ ...btn, background:"linear-gradient(135deg,#3d6b45,#2b5133)", border:"1px solid #57804f", color:"#f0e7cf", width:"100%", maxWidth:320 }}>
@@ -426,51 +495,76 @@
           )}
 
           {stage === "crop" && (
-            <div style={{ flex:1, minHeight:0, position:"relative", overflow:"hidden", background:"#000" }}>
+            <React.Fragment>
+              {/* photo area — the controls sit below this, never on top of it */}
               <div ref={boxRef}
                 onMouseMove={onMove} onMouseUp={endDrag} onMouseLeave={endDrag}
-                onTouchMove={onMove} onTouchEnd={endDrag}
-                style={{ position:"absolute", inset:0, touchAction:"none" }}>
-                <img ref={imgRef} src={imgSrc} alt="" onLoad={onImgLoad}
-                  style={{ width:"100%", height:"100%", objectFit:"contain" }} />
-                <div onMouseDown={startDrag("move")} onTouchStart={startDrag("move")}
-                  style={{ position:"absolute", left:crop.x, top:crop.y, width:crop.w, height:crop.h,
-                    border:"2px solid #d9c47e", boxShadow:"0 0 0 9999px rgba(0,0,0,0.6)",
-                    cursor:"move", touchAction:"none" }}>
-                  {/* thirds guides */}
-                  <div style={{ position:"absolute", inset:0, pointerEvents:"none" }}>
-                    <div style={{ position:"absolute", left:0, right:0, top:"33.3%", height:1, background:"rgba(217,196,126,0.35)" }} />
-                    <div style={{ position:"absolute", left:0, right:0, top:"66.6%", height:1, background:"rgba(217,196,126,0.35)" }} />
+                onTouchMove={onMove} onTouchEnd={endDrag} onTouchCancel={endDrag}
+                style={{ flex:1, minHeight:0, position:"relative", overflow:"hidden",
+                  background:"#000", touchAction:"none" }}>
+                <img ref={imgRef} src={imgSrc} alt="" onLoad={resetPts}
+                  style={{ width:"100%", height:"100%", objectFit:"contain", display:"block" }} />
+
+                {pts.length === 4 && (
+                  <svg width="100%" height="100%" style={{ position:"absolute", inset:0, pointerEvents:"none" }}>
+                    <defs>
+                      <mask id="spineMask">
+                        <rect x="0" y="0" width="100%" height="100%" fill="#fff" />
+                        <polygon points={poly} fill="#000" />
+                      </mask>
+                    </defs>
+                    <rect x="0" y="0" width="100%" height="100%" fill="rgba(0,0,0,0.62)" mask="url(#spineMask)" />
+                    <polygon points={poly} fill="transparent" stroke="#d9c47e" strokeWidth="2"
+                      style={{ pointerEvents:"auto", cursor:"move" }}
+                      onMouseDown={startDrag("move")} onTouchStart={startDrag("move")} />
+                  </svg>
+                )}
+
+                {pts.map((p, i) => (
+                  <div key={i}
+                    onMouseDown={startDrag(i)} onTouchStart={startDrag(i)}
+                    style={{ position:"absolute", left:p.x - HANDLE/2, top:p.y - HANDLE/2,
+                      width:HANDLE, height:HANDLE, borderRadius:"50%",
+                      background:"rgba(217,196,126,0.92)", border:"2px solid #7a5f22",
+                      boxShadow:"0 2px 6px rgba(0,0,0,0.6)",
+                      touchAction:"none", cursor:"grab" }} />
+                ))}
+
+                {busy && (
+                  <div style={{ position:"absolute", inset:0, background:"rgba(7,16,12,0.82)",
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    color:"#d9c47e", fontWeight:700, fontSize:15 }}>
+                    Straightening…
                   </div>
-                  <div onMouseDown={startDrag("nw")} onTouchStart={startDrag("nw")}
-                    style={handleStyle({ left:-HANDLE/2, top:-HANDLE/2, cursor:"nwse-resize" })} />
-                  <div onMouseDown={startDrag("ne")} onTouchStart={startDrag("ne")}
-                    style={handleStyle({ right:-HANDLE/2, top:-HANDLE/2, cursor:"nesw-resize" })} />
-                  <div onMouseDown={startDrag("sw")} onTouchStart={startDrag("sw")}
-                    style={handleStyle({ left:-HANDLE/2, bottom:-HANDLE/2, cursor:"nesw-resize" })} />
-                  <div onMouseDown={startDrag("se")} onTouchStart={startDrag("se")}
-                    style={handleStyle({ right:-HANDLE/2, bottom:-HANDLE/2, cursor:"nwse-resize" })} />
-                </div>
+                )}
               </div>
-              <div style={{ position:"absolute", left:0, right:0, bottom:0,
-                padding:"14px 18px calc(20px + env(safe-area-inset-bottom))",
-                background:"linear-gradient(180deg, rgba(7,16,12,0), rgba(7,16,12,0.9) 40%)",
-                textAlign:"center", pointerEvents:"none" }}>
-                <div style={{ fontSize:12, color:"#c9d4c6", marginBottom:10 }}>
-                  Drag the box to move · drag a corner to resize
+
+              {/* controls — in normal flow, so handles can never hide underneath */}
+              <div style={{ flexShrink:0, background:"#07100c",
+                padding:"12px 18px calc(16px + env(safe-area-inset-bottom))" }}>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"center",
+                  gap:10, marginBottom:10 }}>
+                  <span style={{ fontSize:12, color:"#c9d4c6" }}>
+                    Put each corner on a corner of the spine
+                  </span>
+                  <button onClick={resetPts}
+                    style={{ background:"none", border:"none", color:"#d9c47e",
+                      fontSize:12, fontWeight:700, cursor:"pointer", padding:"2px 4px" }}>
+                    Reset
+                  </button>
                 </div>
-                <div style={{ display:"flex", gap:10, justifyContent:"center", pointerEvents:"auto" }}>
-                  <button onClick={() => { setImgSrc(null); setStage("choose"); }}
+                <div style={{ display:"flex", gap:10, justifyContent:"center" }}>
+                  <button onClick={() => { setImgSrc(null); setPts([]); setErr(""); setStage("choose"); }}
                     style={{ ...btn, background:"#24382b", border:"1px solid #33513c", color:"#efe6d2", flex:"0 1 140px" }}>
                     Retake
                   </button>
-                  <button onClick={confirmCrop}
-                    style={{ ...btn, background:"linear-gradient(135deg,#3d6b45,#2b5133)", border:"1px solid #57804f", color:"#f0e7cf", flex:"1 1 180px", maxWidth:220 }}>
+                  <button onClick={confirmCrop} disabled={busy}
+                    style={{ ...btn, background:"linear-gradient(135deg,#3d6b45,#2b5133)", border:"1px solid #57804f", color:"#f0e7cf", flex:"1 1 180px", maxWidth:220, opacity: busy ? 0.6 : 1 }}>
                     Use This Spine
                   </button>
                 </div>
               </div>
-            </div>
+            </React.Fragment>
           )}
         </div>
       );

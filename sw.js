@@ -1,5 +1,5 @@
 // myshelf service worker — caches the app shell for offline use.
-const CACHE = "myshelf-v12";
+const CACHE = "myshelf-v13";
 const ASSETS = [
   "/",
   "/index.html",

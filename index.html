@@ -295,53 +295,15 @@
 
     // ── Spine capture: take a photo (or pick one), then crop it ───────────────
     function SpineCapture({ onDone, onCancel }) {
-      const [stage, setStage] = useState("choose");   // choose | camera | crop
+      const [stage, setStage] = useState("choose");   // choose | crop
       const [imgSrc, setImgSrc] = useState(null);
       const [err, setErr] = useState("");
-      const videoRef = useRef(null);
-      const streamRef = useRef(null);
       const boxRef = useRef(null);
-      const fileRef = useRef(null);
+      const camRef = useRef(null);     // native camera input
+      const fileRef = useRef(null);    // photo library input
       const imgRef = useRef(null);
       const [crop, setCrop] = useState({ x:0, y:0, w:0, h:0 });
       const drag = useRef(null);
-
-      const stopCam = () => {
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach(t => t.stop());
-          streamRef.current = null;
-        }
-      };
-      useEffect(() => stopCam, []);
-
-      const startCam = async () => {
-        setErr(""); setStage("camera");
-        try {
-          const s = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode:{ ideal:"environment" }, width:{ideal:1920}, height:{ideal:1080} },
-            audio: false,
-          });
-          streamRef.current = s;
-          setTimeout(() => {
-            if (videoRef.current) { videoRef.current.srcObject = s; videoRef.current.play(); }
-          }, 50);
-        } catch (e) {
-          setErr("Camera unavailable. Allow camera access in Settings, or pick a photo instead.");
-          setStage("choose");
-        }
-      };
-
-      // Take the full frame, then hand it to the cropper.
-      const takePhoto = () => {
-        const v = videoRef.current;
-        if (!v || !v.videoWidth) return;
-        const cv = document.createElement("canvas");
-        cv.width = v.videoWidth; cv.height = v.videoHeight;
-        cv.getContext("2d").drawImage(v, 0, 0);
-        stopCam();
-        setImgSrc(cv.toDataURL("image/jpeg", 0.92));
-        setStage("crop");
-      };
 
       const pickFile = (file) => {
         if (!file) return;
@@ -433,7 +395,7 @@
             <span style={{ fontSize:17, fontWeight:700, fontFamily:"Georgia, serif" }}>
               {stage === "crop" ? "Crop the spine" : "Scan a spine"}
             </span>
-            <button onClick={() => { stopCam(); onCancel(); }}
+            <button onClick={onCancel}
               style={{ ...btn, background:"#24382b", border:"1px solid #33513c", color:"#efe6d2", padding:"8px 16px", fontSize:14 }}>
               Cancel
             </button>
@@ -446,9 +408,9 @@
               justifyContent:"center", alignItems:"center", gap:14, padding:"0 30px" }}>
               <div style={{ fontSize:52 }}>📖</div>
               <p style={{ fontSize:14, color:"#a8b5a5", textAlign:"center", lineHeight:1.6, maxWidth:340 }}>
-                Take a photo of the book's spine, or pick one you've already taken. You'll crop it on the next screen.
+                Take a photo of the book's spine, or pick one from your library. You'll crop it on the next screen.
               </p>
-              <button onClick={startCam}
+              <button onClick={() => camRef.current.click()}
                 style={{ ...btn, background:"linear-gradient(135deg,#3d6b45,#2b5133)", border:"1px solid #57804f", color:"#f0e7cf", width:"100%", maxWidth:320 }}>
                 📷 Take Photo
               </button>
@@ -456,27 +418,10 @@
                 style={{ ...btn, background:"#1b3024", border:"1px solid #33513c", color:"#d9c47e", width:"100%", maxWidth:320 }}>
                 🖼 Choose from Photos
               </button>
+              <input ref={camRef} type="file" accept="image/*" capture="environment"
+                style={{ display:"none" }} onChange={e => pickFile(e.target.files[0])} />
               <input ref={fileRef} type="file" accept="image/*" style={{ display:"none" }}
                 onChange={e => pickFile(e.target.files[0])} />
-            </div>
-          )}
-
-          {stage === "camera" && (
-            <div style={{ flex:1, minHeight:0, position:"relative", overflow:"hidden", background:"#000" }}>
-              <video ref={videoRef} playsInline muted
-                style={{ width:"100%", height:"100%", objectFit:"cover" }} />
-              <div style={{ position:"absolute", left:0, right:0, bottom:0,
-                padding:"14px 18px calc(20px + env(safe-area-inset-bottom))",
-                background:"linear-gradient(180deg, rgba(7,16,12,0), rgba(7,16,12,0.9) 40%)",
-                textAlign:"center" }}>
-                <div style={{ fontSize:12, color:"#c9d4c6", marginBottom:10 }}>
-                  Get the whole spine in shot — you'll crop it next
-                </div>
-                <button onClick={takePhoto}
-                  style={{ ...btn, background:"linear-gradient(135deg,#3d6b45,#2b5133)", border:"1px solid #57804f", color:"#f0e7cf", width:"100%", maxWidth:320 }}>
-                  Take Photo
-                </button>
-              </div>
             </div>
           )}
 

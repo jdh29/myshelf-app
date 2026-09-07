@@ -306,9 +306,13 @@
       // Four corners in display coordinates: top-left, top-right, bottom-right, bottom-left.
       const [pts, setPts] = useState([]);
       const drag = useRef(null);
+      // The point currently being dragged, in display coords — drives the magnifier loupe.
+      const [dragPt, setDragPt] = useState(null);
 
       const HANDLE = 34;
       const PAD = HANDLE / 2 + 4;      // keeps every handle fully inside the photo area
+      const LOUPE = 130;               // magnifier diameter
+      const ZOOM = 2.6;                // magnifier zoom factor
 
       const pickFile = (file) => {
         if (!file) return;
@@ -343,6 +347,9 @@
       const startDrag = (idx) => (e) => {
         e.preventDefault(); e.stopPropagation();
         drag.current = { idx, start: pt(e), orig: pts.map(p => ({ ...p })) };
+        // Only individual corners get the magnifier — dragging the whole
+        // quad ("move") doesn't need pixel precision the same way.
+        if (idx !== "move") setDragPt(pts[idx]);
       };
 
       const onMove = (e) => {
@@ -357,13 +364,15 @@
           const oy = Math.max(PAD - Math.min(...ys), Math.min(H - PAD - Math.max(...ys), dy));
           setPts(d.orig.map(q => ({ x: q.x + ox, y: q.y + oy })));
         } else {
-          setPts(d.orig.map((q, i) => i === d.idx ? {
+          const np = d.orig.map((q, i) => i === d.idx ? {
             x: Math.max(PAD, Math.min(W - PAD, q.x + dx)),
             y: Math.max(PAD, Math.min(H - PAD, q.y + dy)),
-          } : q));
+          } : q);
+          setPts(np);
+          setDragPt(np[d.idx]);
         }
       };
-      const endDrag = () => { drag.current = null; };
+      const endDrag = () => { drag.current = null; setDragPt(null); };
 
       // Un-skew the quad into a straight rectangle (projective warp).
       const warp = () => {
@@ -529,6 +538,34 @@
                       boxShadow:"0 2px 6px rgba(0,0,0,0.6)",
                       touchAction:"none", cursor:"grab" }} />
                 ))}
+
+                {dragPt && boxRef.current && (() => {
+                  const dispW = boxRef.current.clientWidth, dispH = boxRef.current.clientHeight;
+                  const GAP = 46, half = LOUPE / 2;
+                  // The loupe floats near the finger without sitting under it —
+                  // above by default, below if there's no room (corner near the top).
+                  const above = dragPt.y - LOUPE - GAP > 0;
+                  let loupeTop = above ? dragPt.y - LOUPE - GAP : dragPt.y + GAP;
+                  loupeTop = Math.max(0, Math.min(dispH - LOUPE, loupeTop));
+                  const loupeLeft = Math.max(0, Math.min(dispW - LOUPE, dragPt.x - half));
+                  // The magnified content is always centred on the touch point —
+                  // where the loupe itself sits on screen doesn't change that.
+                  return (
+                    <div style={{ position:"absolute", left:loupeLeft, top:loupeTop,
+                      width:LOUPE, height:LOUPE, borderRadius:"50%", overflow:"hidden",
+                      border:"3px solid #d9c47e", boxShadow:"0 4px 14px rgba(0,0,0,0.65)",
+                      background:"#000", pointerEvents:"none", zIndex:6 }}>
+                      <img src={imgSrc} alt=""
+                        style={{ position:"absolute", maxWidth:"none",
+                          left: half - dragPt.x * ZOOM, top: half - dragPt.y * ZOOM,
+                          width: dispW * ZOOM, height: dispH * ZOOM, objectFit:"contain" }} />
+                      <div style={{ position:"absolute", left:half, top:0, bottom:0, width:1,
+                        background:"rgba(217,196,126,0.95)", transform:"translateX(-0.5px)" }} />
+                      <div style={{ position:"absolute", top:half, left:0, right:0, height:1,
+                        background:"rgba(217,196,126,0.95)", transform:"translateY(-0.5px)" }} />
+                    </div>
+                  );
+                })()}
 
                 {busy && (
                   <div style={{ position:"absolute", inset:0, background:"rgba(7,16,12,0.82)",

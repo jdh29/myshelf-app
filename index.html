@@ -33,7 +33,7 @@
     const emptyBook = {
       id: null, title: "", author: "", pages: "", genre: "",
       year: "", publisher: "", isbn: "", description: "",
-      status: "Unread", rating: 0, cover: null, spineImage: null, addedAt: null,
+      status: "Unread", rating: 0, cover: null, spineImage: null, spineAspect: null, addedAt: null,
     };
 
     const resizeImage = (dataUrl, maxSize = 500) => new Promise((resolve) => {
@@ -120,9 +120,21 @@
       return { w: widthBase, hPct: 88 + (h % 12) }; // height 88–99% of shelf
     }
 
-    function Spine({ book, onClick }) {
-      const col = spineColorFor(book);
+    // For a real spine photo, derive the box width from the photo's own aspect
+    // ratio so it's never forced (and cropped) into an unrelated page-count width.
+    function spineRenderWidth(book, rowHeight) {
       const { w, hPct } = spineDims(book);
+      if (book.spineImage && book.spineAspect) {
+        const pxH = rowHeight * (hPct / 100);
+        return Math.max(18, Math.round(pxH * book.spineAspect));
+      }
+      return w;
+    }
+
+    function Spine({ book, onClick, rowHeight, onMeasured }) {
+      const col = spineColorFor(book);
+      const { hPct } = spineDims(book);
+      const w = spineRenderWidth(book, rowHeight);
       const title = (book.title || "Untitled");
       const shown = title.length > 26 ? title.slice(0, 25) + "…" : title;
       // If the user supplied a real spine photo, show that instead.
@@ -133,7 +145,14 @@
               borderRadius:"2px 3px 3px 2px", overflow:"hidden", flexShrink:0,
               boxShadow:"2px 3px 7px rgba(0,0,0,0.55)" }}>
             <img src={book.spineImage} alt={title}
-              style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }} />
+              onLoad={e => {
+                // Older photos saved before we tracked aspect ratio: measure once
+                // and report it up so the shelf can stop guessing their width.
+                if (book.spineAspect || !onMeasured) return;
+                const n = e.target;
+                if (n.naturalWidth && n.naturalHeight) onMeasured(book.id, n.naturalWidth / n.naturalHeight);
+              }}
+              style={{ width:"100%", height:"100%", objectFit:"contain", display:"block" }} />
           </div>
         );
       }
@@ -170,7 +189,7 @@
     const COVER_GAP = 12;
 
     // One wooden shelf board with a row of books resting on it.
-    function ShelfRow({ books, mode, onOpen, rowHeight, showEnds }) {
+    function ShelfRow({ books, mode, onOpen, rowHeight, showEnds, onMeasured }) {
       return (
         <div>
           {mode === "spine" ? (
@@ -178,7 +197,8 @@
               gap:SPINE_GAP, height:rowHeight, overflow:"hidden" }}>
               {showEnds && <img src="/bookend-l.png" alt=""
                 style={{ width:BOOKEND_W, alignSelf:"flex-end", flexShrink:0, marginRight:-2 }} />}
-              {books.map(b => <Spine key={b.id} book={b} onClick={() => onOpen(b)} />)}
+              {books.map(b => <Spine key={b.id} book={b} onClick={() => onOpen(b)}
+                rowHeight={rowHeight} onMeasured={onMeasured} />)}
               {showEnds && <img src="/bookend-r.png" alt=""
                 style={{ width:BOOKEND_W, alignSelf:"flex-end", flexShrink:0, marginLeft:-2 }} />}
             </div>
@@ -211,7 +231,7 @@
     }
 
     // A labelled section that packs its books onto as many shelf rows as fit.
-    function Shelf({ label, books, mode, onOpen }) {
+    function Shelf({ label, books, mode, onOpen, onMeasured }) {
       const ROW_H = mode === "spine" ? 190 : 175;
       const wrapRef = useRef(null);
       const [avail, setAvail] = useState(0);
@@ -236,7 +256,8 @@
         };
       }, []);
 
-      // Pack books into rows using each book's actual rendered width.
+      // Pack books into rows using each book's actual rendered width —
+      // a photographed spine uses its own aspect ratio, not the page-count guess.
       const rows = [];
       if (books.length) {
         const usable = Math.max(120, avail || 320);
@@ -245,7 +266,7 @@
           const budget = usable - (BOOKEND_W * 2) - 6;
           let row = [], used = 0;
           for (const b of books) {
-            const w = spineDims(b).w + SPINE_GAP;
+            const w = spineRenderWidth(b, ROW_H) + SPINE_GAP;
             if (row.length && used + w > budget) { rows.push(row); row = []; used = 0; }
             row.push(b); used += w;
           }
@@ -286,7 +307,7 @@
               </div>
             ) : rows.map((row, i) => (
               <ShelfRow key={i} books={row} mode={mode} onOpen={onOpen}
-                rowHeight={ROW_H} showEnds={mode === "spine"} />
+                rowHeight={ROW_H} showEnds={mode === "spine"} onMeasured={onMeasured} />
             ))}
           </div>
         </div>
@@ -448,7 +469,7 @@
           }
         }
         octx.putImageData(dst, 0, 0);
-        onDone(out.toDataURL("image/jpeg", 0.88));
+        onDone(out.toDataURL("image/jpeg", 0.88), OUT_W / OUT_H);
       };
 
       const confirmCrop = () => {
@@ -816,6 +837,18 @@
       const editBook   = (book) => { setForm({ ...book }); setPreviewImg(book.cover || null); setScanError(""); setView("add"); };
       const setStatus  = (book, status) => { saveBooks(books.map(b => b.id === book.id ? { ...b, status } : b)); setSelected({ ...book, status }); };
 
+      // One-time backfill for spine photos saved before we tracked their aspect
+      // ratio: a Spine measures its own image and reports it here, once.
+      // Best-effort — if two old photos happen to finish loading in the very
+      // same tick, whichever applies second wins this run; the other quietly
+      // re-measures and saves next time the shelf renders.
+      const measuredIds = useRef(new Set());
+      const handleSpineMeasured = (id, aspect) => {
+        if (measuredIds.current.has(id)) return;
+        measuredIds.current.add(id);
+        saveBooks(books.map(b => b.id === id ? { ...b, spineAspect: aspect } : b));
+      };
+
       const statuses = ["All", "Unread", "Reading", "Finished"];
       const filtered = books.filter(b => {
         const matchStatus = filter === "All" || b.status === filter;
@@ -890,7 +923,7 @@
           {spineCapture && (
             <SpineCapture
               onCancel={() => setSpineCapture(false)}
-              onDone={(img) => { setForm(f => ({ ...f, spineImage: img })); setSpineCapture(false); }}
+              onDone={(img, aspect) => { setForm(f => ({ ...f, spineImage: img, spineAspect: aspect })); setSpineCapture(false); }}
             />
           )}
           {scanningBarcode && (
@@ -952,7 +985,8 @@
               <div style={{ display:"flex", alignItems:"center", gap:12, marginTop:10,
                 background:"#14251b", border:"1px solid #2a3f2f", borderRadius:10, padding:"10px 12px" }}>
                 <img src={form.spineImage} alt="spine"
-                  style={{ width:26, height:104, objectFit:"cover", borderRadius:2,
+                  style={{ width: Math.max(14, Math.min(60, Math.round(104 * (form.spineAspect || 0.28)))),
+                    height:104, objectFit:"contain", borderRadius:2,
                     boxShadow:"2px 3px 7px rgba(0,0,0,0.55)" }} />
                 <div style={{ flex:1, fontSize:12, color:"#a8b5a5", lineHeight:1.5 }}>
                   This photo will be used on the shelf instead of a generated spine.
@@ -1113,9 +1147,9 @@
               </div>
             ) : (
               <div>
-                <Shelf label="Currently Reading" books={reading}  mode={shelfMode} onOpen={openDetail} />
-                <Shelf label="To Read"           books={unread}   mode={shelfMode} onOpen={openDetail} />
-                <Shelf label="Finished"          books={finished} mode={shelfMode} onOpen={openDetail} />
+                <Shelf label="Currently Reading" books={reading}  mode={shelfMode} onOpen={openDetail} onMeasured={handleSpineMeasured} />
+                <Shelf label="To Read"           books={unread}   mode={shelfMode} onOpen={openDetail} onMeasured={handleSpineMeasured} />
+                <Shelf label="Finished"          books={finished} mode={shelfMode} onOpen={openDetail} onMeasured={handleSpineMeasured} />
               </div>
             )}
           </div>

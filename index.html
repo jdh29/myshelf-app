@@ -315,9 +315,11 @@
     }
 
     // ── Spine capture: photograph a spine, then pull its four corners square ──
-    function SpineCapture({ onDone, onCancel }) {
-      const [stage, setStage] = useState("choose");   // choose | crop
-      const [imgSrc, setImgSrc] = useState(null);
+    function SpineCapture({ onDone, onCancel, initialImage }) {
+      // If we're re-cropping a photo that's already been taken, skip straight
+      // to the crop stage with that image instead of asking for a new one.
+      const [stage, setStage] = useState(initialImage ? "crop" : "choose");   // choose | crop
+      const [imgSrc, setImgSrc] = useState(initialImage || null);
       const [busy, setBusy] = useState(false);
       const [err, setErr] = useState("");
       const boxRef  = useRef(null);
@@ -646,6 +648,9 @@
       const [shelfMode, setShelfMode] = useState(() => localStorage.getItem("myshelf_mode") || "spine");
       const coverRef  = useRef();
       const [spineCapture, setSpineCapture] = useState(false);
+      // When re-cropping an existing spine photo (rather than taking a new one),
+      // this holds the photo to reopen the tool with.
+      const [recropSource, setRecropSource] = useState(null);
       const barcodeScannerRef = useRef(null);
       const saveTimer = useRef(null);
 
@@ -922,8 +927,9 @@
         <div style={{ position:"fixed", inset:0, background:"#0d1712", overflowY:"auto", fontFamily:"'Inter',system-ui,sans-serif", color:"#efe6d2", paddingBottom:80 }}>
           {spineCapture && (
             <SpineCapture
-              onCancel={() => setSpineCapture(false)}
-              onDone={(img, aspect) => { setForm(f => ({ ...f, spineImage: img, spineAspect: aspect })); setSpineCapture(false); }}
+              initialImage={recropSource}
+              onCancel={() => { setSpineCapture(false); setRecropSource(null); }}
+              onDone={(img, aspect) => { setForm(f => ({ ...f, spineImage: img, spineAspect: aspect })); setSpineCapture(false); setRecropSource(null); }}
             />
           )}
           {scanningBarcode && (
@@ -978,8 +984,8 @@
             </button>
             <input ref={coverRef} type="file" accept="image/*" style={{ display:"none" }} onChange={e => handleCoverPhoto(e.target.files[0])} />
 
-            <button onClick={() => setSpineCapture(true)} style={{ ...btnSec, width:"100%", marginBottom:4 }}>
-              📖 {form.spineImage ? "Rescan Spine Photo" : "Scan Spine Photo"}
+            <button onClick={() => { setRecropSource(null); setSpineCapture(true); }} style={{ ...btnSec, width:"100%", marginBottom:4 }}>
+              📖 {form.spineImage ? "Retake Spine Photo" : "Scan Spine Photo"}
             </button>
             {form.spineImage && (
               <div style={{ display:"flex", alignItems:"center", gap:12, marginTop:10,
@@ -988,10 +994,17 @@
                   style={{ width: Math.max(14, Math.min(60, Math.round(104 * (form.spineAspect || 0.28)))),
                     height:104, objectFit:"contain", borderRadius:2,
                     boxShadow:"2px 3px 7px rgba(0,0,0,0.55)" }} />
-                <div style={{ flex:1, fontSize:12, color:"#a8b5a5", lineHeight:1.5 }}>
-                  This photo will be used on the shelf instead of a generated spine.
+                <div style={{ flex:1, display:"flex", flexDirection:"column", gap:6 }}>
+                  <div style={{ fontSize:12, color:"#a8b5a5", lineHeight:1.5 }}>
+                    This photo will be used on the shelf instead of a generated spine.
+                  </div>
+                  <button onClick={() => { setRecropSource(form.spineImage); setSpineCapture(true); }}
+                    style={{ alignSelf:"flex-start", background:"none", border:"none", color:"#d9c47e",
+                      fontWeight:700, fontSize:12, cursor:"pointer", padding:"2px 0" }}>
+                    ✂️ Adjust Crop
+                  </button>
                 </div>
-                <button onClick={() => setForm(f => ({ ...f, spineImage: null }))}
+                <button onClick={() => setForm(f => ({ ...f, spineImage: null, spineAspect: null }))}
                   style={{ background:"#301a1a", border:"1px solid #5c2a2a", borderRadius:9,
                     padding:"7px 11px", color:"#e07a6a", fontWeight:700, fontSize:12, cursor:"pointer" }}>
                   Remove
